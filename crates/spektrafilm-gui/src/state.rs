@@ -100,6 +100,7 @@ fn canonicalize_grain_state(section: &mut Value) {
         "active",
         "rms_granularity",
         "dye_strength",
+        "dye_size",
         "dye_color_grain",
         "density_min",
         "uniformity",

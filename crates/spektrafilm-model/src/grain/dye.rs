@@ -24,7 +24,7 @@ pub struct ReadoutGrid {
 ///
 /// The profile, chemistry, density curves, and film geometry are consumed by
 /// the upstream chain that forms the density target. They are not repeated
-/// here: the field law only needs the record layout, the one look control,
+/// here: the field law only needs the record layout, the look controls,
 /// the profile layer count, the seed, and the expectation diagnostic.
 #[derive(Debug, Clone)]
 pub struct DyeGrainParams {
@@ -35,6 +35,9 @@ pub struct DyeGrainParams {
     /// Relative delivered-law grain amplitude from the recipe. `1.0` keeps
     /// the delivered law; `0.0` realizes the target without random grain.
     pub dye_strength: f64,
+    /// Relative correlation length. `1.0` keeps the polarity's delivered
+    /// base cell; larger values scale the base, layer ladder, and fine cell.
+    pub dye_size: f64,
     /// Relative separation of the three color records' grain fields.
     /// `0.0` shares the field; `1.0` gives each record its own. This maps to
     /// `rho = 1.0 - color_grain`; the default value is `0.75`.

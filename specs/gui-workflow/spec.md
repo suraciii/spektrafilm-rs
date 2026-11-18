@@ -166,11 +166,15 @@ No duplicate grain selector or automatic engine conversion is required.
 
 Ordinary Grain browsing MUST place Enable grain and Engine first. It MUST show the selected engine's effective grain controls. Turning grain off MUST hide grain-only numerical controls without clearing their requests.
 
-Dye MUST expose Grain strength and Inter-record grain separation as its numerical grain editors. Grain strength 0 MUST remove random grain, including residual count noise; 1 MUST keep the delivered rendering.
+Dye MUST expose Grain strength, Dye grain size, and Inter-record grain separation as its numerical grain editors. Grain strength 0 MUST remove random grain, including residual count noise; 1 MUST keep the delivered rendering.
+
+Dye grain size 1 MUST keep the delivered correlation length; larger values MUST scale the film-coordinate delivered base, every active layer's relative cell, and the positive microcontrast cell by the same factor. Its tooltip MUST state that aperture-integrated granularity can change and that it is not output-pixel size or a tone shift.
 
 Inter-record grain separation 0 MUST share one field across the color records; 1 MUST give each record its own field. The editor displays the stored `dye_color_grain` value directly, and `0.75` MUST remain the default. Its tooltip MUST state that higher separation makes RGB grain more distinct and more chromatic.
 
-Black-and-white Dye MUST hide Inter-record grain separation and keep only Grain strength editable. Control search MAY reveal the hidden row disabled with the color-film reason, but MUST NOT make it editable. The delivered cell size is an engine constant in film coordinates and MUST NOT be presented as a user control.
+Black-and-white Dye MUST hide Inter-record grain separation and keep Grain strength and Dye grain size editable. Control search MAY reveal the hidden separation row disabled with the color-film reason, but MUST NOT make it editable.
+
+The absolute delivered base cell is an engine constant in film coordinates and MUST NOT be presented as a separate user control; Dye grain size is the relative film-coordinate control.
 
 RMS granularity, density minimum, uniformity, and particle scale sublayers MUST remain stored recipe values without Dye grain editors; loads and saves MUST keep them unchanged. The GUI MUST NOT present them as effective Dye grain controls.
 

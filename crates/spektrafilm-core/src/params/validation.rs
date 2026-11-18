@@ -249,6 +249,7 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         | "film_render.grain.exposure.highlight_threshold" => Some((0.0, Some(1.0))),
         "film_render.grain.exposure.seed" => Some((0.0, Some(2_147_483_647.0))),
         "film_render.grain.dye_strength" => Some((0.0, Some(4.0))),
+        "film_render.grain.dye_size" => Some((1.0, Some(4.0))),
         "film_render.grain.dye_color_grain" => Some((0.0, Some(1.0))),
         // Discovery range only; `validate` and the sparse-source leaf check
         // own the strict positivity.
@@ -1074,6 +1075,7 @@ pub(super) fn validate_finite_values_detailed(
             "film_render.grain",
             procedural_timer,
             dye_strength,
+            dye_size,
             dye_color_grain,
             mult_usm_sigma,
             mult_usm_amount,
@@ -1341,6 +1343,7 @@ pub(super) fn validate_values_detailed(params: &RuntimeParams) -> Result<(), Val
             f64::from(grain.procedural_timer),
         ),
         ("film_render.grain.dye_strength", grain.dye_strength),
+        ("film_render.grain.dye_size", grain.dye_size),
         ("film_render.grain.dye_color_grain", grain.dye_color_grain),
     ] {
         validate_scalar_detailed(path, value)?;

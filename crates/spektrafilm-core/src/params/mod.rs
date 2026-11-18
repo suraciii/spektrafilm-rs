@@ -1482,9 +1482,11 @@ mod tests {
             super::grain::GrainEngine::Dye
         );
         assert_eq!(default.film_render.grain.dye_strength, 1.0);
+        assert_eq!(default.film_render.grain.dye_size, 1.0);
         assert_eq!(default.film_render.grain.dye_color_grain, 0.75);
         value["film_render"]["grain"]["engine"] = serde_json::json!("dye");
         value["film_render"]["grain"]["dye_strength"] = serde_json::json!(1.6);
+        value["film_render"]["grain"]["dye_size"] = serde_json::json!(2.0);
         value["film_render"]["grain"]["dye_color_grain"] = serde_json::json!(0.35);
         let params: super::RuntimeParams = serde_json::from_value(value).unwrap();
         let reparsed: super::RuntimeParams =
@@ -1492,6 +1494,7 @@ mod tests {
         for grain in [&params.film_render.grain, &reparsed.film_render.grain] {
             assert_eq!(grain.engine, super::grain::GrainEngine::Dye);
             assert_eq!(grain.dye_strength, 1.6);
+            assert_eq!(grain.dye_size, 2.0);
             assert_eq!(grain.dye_color_grain, 0.35);
         }
         assert!(serde_json::from_str::<super::GrainParams>(r#"{"engine":"unknown"}"#).is_err());
@@ -1514,6 +1517,20 @@ mod tests {
             let error = bad.validate().unwrap_err();
             assert!(
                 error.contains("film_render.grain.dye_strength"),
+                "unexpected error for {value}: {error}"
+            );
+        }
+        for value in [1.0, 2.0, 4.0] {
+            let mut ok = params.clone();
+            ok.film_render.grain.dye_size = value;
+            ok.validate().unwrap();
+        }
+        for value in [0.5, 0.0, -0.1, 4.1, f64::NAN, f64::INFINITY] {
+            let mut bad = params.clone();
+            bad.film_render.grain.dye_size = value;
+            let error = bad.validate().unwrap_err();
+            assert!(
+                error.contains("film_render.grain.dye_size"),
                 "unexpected error for {value}: {error}"
             );
         }

@@ -626,6 +626,9 @@ fn description(path: &str) -> Option<&'static str> {
         "film_render.grain.procedural_amount" => Some(
             "Grain Procedural Amount in percent; used with named and custom Procedural profiles, distinct from RMS granularity.",
         ),
+        "film_render.grain.dye_size" => Some(
+            "Relative Dye grain size in film coordinates: 1 keeps the delivered correlation length; larger values scale the base, layer, and microcontrast cells together. At a fixed aperture, aperture-integrated granularity can change; this is not a tone shift, crystal diameter, scanner blur, or output-pixel size.",
+        ),
         "film_render.grain.dye_color_grain" => Some(
             "Relative separation of the three color records' Dye grain fields: zero shares the field, one gives each record its own. The default is 0.75; 0.2 reproduces the previous delivered look. Affects grain chroma only; black-and-white film hides this color-film control.",
         ),

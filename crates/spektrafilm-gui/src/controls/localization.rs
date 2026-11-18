@@ -497,6 +497,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Dye negative" => Some("controls.grain.dye_negative"),
         "Dye reversal" => Some("controls.grain.dye_reversal"),
         "Grain strength (×)" => Some("controls.grain.dye_strength"),
+        "Dye grain size (relative)" => Some("controls.grain.dye_size"),
         "Inter-record grain separation" => Some("controls.grain.dye_color_grain"),
         "Grain size (relative)" => Some("controls.grain.grain_size"),
         "Automatic size" => Some("controls.grain.automatic_size"),
@@ -695,6 +696,9 @@ fn key(label: &str) -> Option<&'static str> {
         }
         "Relative Dye grain amplitude: 1 keeps the delivered look; 0 removes random grain, including residual count noise. The density response and the inter-record ratio stay unchanged, and this is not a certified optical RMS target." => {
             Some("controls.grain.dye_strength_help")
+        }
+        "Relative Dye grain size in film coordinates: 1 keeps the delivered correlation length; larger values scale the base, layer, and microcontrast cells together. At a fixed aperture, aperture-integrated granularity can change; this is not a tone shift, crystal diameter, scanner blur, or output-pixel size." => {
+            Some("controls.grain.dye_size_help")
         }
         "0 = shared field, 1 = independent records. Affects grain chroma: higher separation makes RGB grain more distinct and more chromatic." => {
             Some("controls.grain.dye_color_grain_help")
@@ -1940,6 +1944,31 @@ mod tests {
                 localized_for(
                     locale,
                     "0 = shared field, 1 = independent records. Affects grain chroma: higher separation makes RGB grain more distinct and more chromatic."
+                ),
+                help
+            );
+        }
+    }
+
+    #[test]
+    fn dye_size_is_physical_in_both_languages() {
+        for (locale, label, help) in [
+            (
+                Locale::English,
+                "Dye grain size (relative)",
+                "Relative Dye grain size in film coordinates: 1 keeps the delivered correlation length; larger values scale the base, layer, and microcontrast cells together. At a fixed aperture, aperture-integrated granularity can change; this is not a tone shift, crystal diameter, scanner blur, or output-pixel size.",
+            ),
+            (
+                Locale::SimplifiedChinese,
+                "Dye 颗粒尺寸（相对）",
+                "Dye 颗粒在胶片坐标中的相对尺寸：1 保持已交付的相关长度；更大的值同时放大基础、分层与微对比单元。固定孔径下，孔径积分颗粒度可能变化；这不是色调偏移、晶体直径、扫描仪模糊或输出像素尺寸。",
+            ),
+        ] {
+            assert_eq!(localized_for(locale, "Dye grain size (relative)"), label);
+            assert_eq!(
+                localized_for(
+                    locale,
+                    "Relative Dye grain size in film coordinates: 1 keeps the delivered correlation length; larger values scale the base, layer, and microcontrast cells together. At a fixed aperture, aperture-integrated granularity can change; this is not a tone shift, crystal diameter, scanner blur, or output-pixel size."
                 ),
                 help
             );

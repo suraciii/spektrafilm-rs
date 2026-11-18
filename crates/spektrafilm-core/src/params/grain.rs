@@ -320,6 +320,13 @@ pub struct GrainParams {
     /// Dye-only.
     #[serde(default = "default_dye_strength")]
     pub dye_strength: f64,
+    /// Relative Dye grain size in film coordinates. `1.0` keeps the
+    /// delivered correlation length; larger values scale the base cell, every
+    /// active layer's relative cell scale, and the positive microcontrast cell
+    /// together. It is not a crystal diameter, scanner blur, or output-pixel
+    /// size. Dye-only.
+    #[serde(default = "default_dye_size")]
+    pub dye_size: f64,
     /// Relative separation of the three color records' grain fields.
     ///
     /// `0` puts all records on the shared field; `1` gives each record an
@@ -382,6 +389,9 @@ fn default_particle_scale_sublayers_f64() -> [f64; 3] {
 fn default_dye_strength() -> f64 {
     1.0
 }
+fn default_dye_size() -> f64 {
+    1.0
+}
 fn default_dye_color_grain() -> f64 {
     0.75
 }
@@ -439,6 +449,7 @@ impl Default for GrainParams {
             retired_dye_event_area_um2: (),
             retired_channel_correlation: (),
             dye_strength: default_dye_strength(),
+            dye_size: default_dye_size(),
             dye_color_grain: default_dye_color_grain(),
             blur: 0.89,
             mult_usm_sigma: 0.7,

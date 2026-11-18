@@ -1283,6 +1283,7 @@ fn grain_procedural_canonical_fields_roundtrip_through_state_and_runtime() {
     grain.procedural_timer = 0.375;
     grain.active = false;
     grain.rms_granularity = [11.0, 13.0, 17.0];
+    grain.dye_size = 2.0;
     grain.density_min = [0.11, 0.22, 0.33];
     grain.uniformity = [0.91, 0.92, 0.93];
     grain.particle_scale_sublayers = [1.0, 0.75, 0.5];
@@ -1306,6 +1307,7 @@ fn grain_procedural_canonical_fields_roundtrip_through_state_and_runtime() {
     assert_eq!(restored.procedural_resolution_type, 0);
     assert_eq!(restored.procedural_timer, 0.375);
     assert_eq!(restored.rms_granularity, [11.0, 13.0, 17.0]);
+    assert_eq!(restored.dye_size, 2.0);
     assert_eq!(restored.density_min, [0.11, 0.22, 0.33]);
     assert_eq!(restored.uniformity, [0.91, 0.92, 0.93]);
     assert_eq!(restored.particle_scale_sublayers, [1.0, 0.75, 0.5]);
@@ -1316,11 +1318,12 @@ fn grain_procedural_canonical_fields_roundtrip_through_state_and_runtime() {
     assert_eq!(restored.micro_structure, [0.4, 24.0]);
 
     let object = loaded.sections["grain"].as_object().unwrap();
-    assert_eq!(object.len(), 13);
+    assert_eq!(object.len(), 14);
     for key in [
         "active",
         "rms_granularity",
         "dye_strength",
+        "dye_size",
         "dye_color_grain",
         "density_min",
         "uniformity",

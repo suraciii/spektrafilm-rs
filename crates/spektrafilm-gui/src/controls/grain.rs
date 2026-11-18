@@ -508,6 +508,14 @@ fn engine_controls(
                 ui,
                 params,
                 filter,
+                dye_size,
+                "Dye grain size (relative)",
+                "Relative Dye grain size in film coordinates: 1 keeps the delivered correlation length; larger values scale the base, layer, and microcontrast cells together. At a fixed aperture, aperture-integrated granularity can change; this is not a tone shift, crystal diameter, scanner blur, or output-pixel size."
+            );
+            changed |= number!(
+                ui,
+                params,
+                filter,
                 dye_color_grain,
                 "Inter-record grain separation",
                 "0 = shared field, 1 = independent records. Affects grain chroma: higher separation makes RGB grain more distinct and more chromatic."
@@ -1542,6 +1550,16 @@ mod tests {
         harness.get_by_label("Grain strength (×)").type_text("0.5");
         harness.run();
         assert_eq!(harness.state().params.film_render.grain.dye_strength, 0.5);
+        let size = harness.get_by_label("Dye grain size (relative)");
+        assert!(!size.node().is_disabled());
+        size.focus();
+        harness.run();
+        harness.press_key_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        harness
+            .get_by_label("Dye grain size (relative)")
+            .type_text("2");
+        harness.run();
+        assert_eq!(harness.state().params.film_render.grain.dye_size, 2.0);
         // Hidden shared requests stay stored without editors.
         assert_eq!(
             harness.state().params.film_render.grain.density_min,

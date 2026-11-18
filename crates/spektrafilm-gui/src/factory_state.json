@@ -25,6 +25,7 @@
       4.9
     ],
     "dye_strength": 1.0,
+    "dye_size": 1.0,
     "dye_color_grain": 0.75,
     "density_min": [
       0.03,

@@ -4,7 +4,9 @@
 
 Dye realizes developed film record density as a coordinate-addressed value-noise field whose amplitude follows a granularity curve derived from development statistics.
 
-The delivered base cell is polarity-dependent: negative profiles use 14.0 µm, and positive profiles use 7.0 µm. Positive profiles keep that base on every density layer and add a 3.85 µm microcontrast lattice at 35% field variance. The finer positive structure keeps visible grain from collapsing into a low-frequency density cloud without returning to subpixel noise.
+The delivered base cell is polarity-dependent: negative profiles use 14.0 µm, and positive profiles use 7.0 µm at relative size `1`. The public `dye_size` control scales that base, every active layer's relative cell, and the positive microcontrast cell together.
+
+Positive profiles keep that base on every density layer and add a 3.85 µm microcontrast lattice at 35% field variance. The finer positive structure keeps visible grain from collapsing into a low-frequency density cloud without returning to subpixel noise.
 
 Positive profiles also carry twice the delivered field and count amplitude at the same public strength. Their direct-scan density-to-encoded contrast maps the same density modulation to a smaller encoded contrast than a print scan.
 
@@ -18,7 +20,9 @@ The field lives on the film lattice. The readout resamples it: finer grids inter
 
 **Value-noise field**: one unit-variance smoothstep-interpolated value-noise lattice. It carries the aggregate texture at a film-coordinate correlation length.
 
-**Delivered base cell**: the base value-noise cell. Negative profiles deliver 14.0 µm; positive profiles deliver 7.0 µm. It is engine data, not a public control.
+**Delivered base cell**: the base value-noise cell at relative size `1`. Negative profiles deliver 14.0 µm; positive profiles deliver 7.0 µm. It is engine data, not an absolute user control.
+
+The public `dye_size` control scales it and every relative cell derived from it.
 
 **Microcontrast field**: an independent value-noise lattice mixed into the field by variance. Positive profiles deliver a relative cell of 0.55 and a variance fraction of 0.35; negative profiles deliver zero weight. The mixture keeps unit variance.
 
@@ -78,13 +82,31 @@ The asymptotic zero is `dmax_l,c / uniformity`, above the sampled curve peak. Th
 
 A profile whose layer curves under-sum its composite axis can over-normalize one layer target past its sampled peak. The taper then clamps at `peak / uniformity`, so that layer's correlated field is zero in the band. The count term preserves `E[D] = t`; certification MUST record the affected band as a profile-data limit, not a second grain law.
 
-`cell_base` is 14.0 µm for negative profiles and 7.0 µm for positive profiles. The positive microcontrast uses `w = 0.35` at `0.55 * cell_base`; negative profiles use `w = 0`.
+`cell_base` is 14.0 µm for negative profiles and 7.0 µm for positive profiles. The public relative size `k` scales the delivered lattice: `cell = k * cell_base`. The positive microcontrast uses `w = 0.35` at `0.55 * cell`; negative profiles use `w = 0`.
 
 Both components have unit variance, so `u_base` has unit variance and the existing law is unchanged. The profile layer curves do not reorder those delivered bases.
 
 The expectation diagnostic replaces `count_l` by `lambda_l` and the field draws by their conditional means; it MUST return the target density.
 
 Fog keeps the event rate alive at clear base. It is a density baseline, not a level offset: the same `f` is subtracted after the count, so tone is unchanged.
+
+## Grain-size control
+
+Let `k` be the public grain size in `[1, 4]` and `a_cell` the polarity's delivered base cell (`14.0 µm` for negative, `7.0 µm` for positive). The size maps as:
+
+```text
+cell      = k * a_cell
+fine_cell = 0.55 * cell
+cell_l    = k * ladder_l * a_cell
+```
+
+`ladder_l` is the active layer's engine-owned relative cell (`1.0`, `0.5`, `0.3` for negative profiles; `1.0` for positive profiles). `k = 1` leaves the delivered lattice unchanged.
+
+The control MUST preserve `E[D] = t`, the per-sample field variance, the event area, the strength mapping, the record coupling, and every field and count stream.
+
+The realization can differ because the value-noise lattice is addressed at the mapped cell size; that is a changed lattice, not a reseed. At a fixed seed and aperture, the larger correlation length can change aperture-integrated granularity and perceived grain. It MUST NOT be described as a tone shift.
+
+The effective cell MUST be finite and positive. Public values outside `[1, 4]` MUST fail before allocation. The delivered absolute base remains engine data; `k` is a relative film-coordinate control, not a crystal diameter, scanner blur, or output-pixel size.
 
 ## Strength controls
 
@@ -103,7 +125,7 @@ q_eff     = q * s_eff^2
 
 A mapped event area below the f32 normal minimum resolves to the deterministic limit on both executors. Above the exact count-rate threshold the count deviation is normal and evaluated directly, so a small event area cannot overflow the rate or lose the mean.
 
-A delivered cell whose size or coordinates are not finite and positive MUST fail before allocation.
+A mapped cell whose size or coordinates are not finite and positive MUST fail before allocation.
 
 ## Inter-record grain separation control
 
@@ -121,11 +143,11 @@ Changing `c` MUST NOT change the shared or per-record mean; it changes their cov
 
 ## Field construction
 
-One smoothstep-interpolated value-noise lattice uses a delivered base cell size of 14.0 µm for negative profiles and 7.0 µm for positive profiles. The field is multiplied by one fixed scale that makes it unit variance.
+One smoothstep-interpolated value-noise lattice uses a delivered base cell size of 14.0 µm for negative profiles and 7.0 µm for positive profiles at relative size `1`. The public `dye_size` scales every cell derived from that base. The field is multiplied by one fixed scale that makes it unit variance.
 
 Positive profiles mix a second independent lattice at 0.55 times the cell size and 35% of the variance; negative profiles use one lattice.
 
-The profile's density layers carry the multi-layer structure instead of an octave stack. Negative profiles use relative cell sizes 1.0, 0.5, and 0.3 of the 14.0 µm base.
+The profile's density layers carry the multi-layer structure instead of an octave stack. Negative profiles use relative cell sizes 1.0, 0.5, and 0.3 of the base.
 
 The profile curves select the active layer count and each layer's density share. Positive profiles keep 1.0 on every layer. Their density curves weight a normal-density target toward the finest-index layer; a 0.3 cell at a 35 mm 1:1 crop would fall below one source pixel and read as uncorrelated noise.
 
@@ -149,7 +171,7 @@ The device evaluates the same law in two passes. One dispatch writes the shared 
 
 The field pass is pointwise, so a band needs no filter halo; its transport window still includes one source cell of bilinear readout support.
 
-The profile layer curve table is uploaded with the field request, so the resident carrier can execute the same layered law. Each active layer reads its relative cell size from the same engine constants on both executors.
+The profile layer curve table is uploaded with the field request, so the resident carrier can execute the same layered law. Each active layer reads its relative cell size from the same size mapping and engine constants on both executors.
 
 The count is drawn by the same method on both executors: inversion below thirty events, PTRS above, up to the exact-rate threshold of `10^9` events per cell. Above that threshold both executors draw the same coordinate-addressed normal deviation.
 
