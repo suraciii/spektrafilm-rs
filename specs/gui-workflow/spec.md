@@ -380,9 +380,9 @@ The header actions MUST name the next undoable or redoable operation and be disa
 
 ## Film format selection
 
-The Camera module MUST expose one **Film Format** selector with **35mm**, **120**, **4×5**, and **Custom**. These are specification labels, not numeric roll-width values. The first three choices MUST set `camera.film_format_mm` to exposed-image long edges of 36, 56, and 127 mm respectively.
+The Camera module MUST expose one **Film Format** selector with **Super 8**, **16mm**, **110**, **35mm cine**, **35mm**, **65mm**, **120**, **4×5**, and **Custom**. These are specification labels, not numeric roll-width values. The named choices MUST set `camera.film_format_mm` to exposed-image long edges of 5.79, 10.26, 17, 24.9, 36, 52.6, 56, and 127 mm respectively.
 
-The 120 choice uses a fixed representative 56 mm scale.
+The 120 choice uses a fixed representative 56 mm scale for 6×4.5 and 6×6. 35mm cine uses the 24.9 mm full aperture; 65mm uses the 52.6 mm 5-perf frame.
 
 A specification selection MUST change only that canonical physical-scale value and its edit provenance. It MUST NOT change crop, aspect ratio, output dimensions, or other effect controls. It MUST form one undoable adjustment.
 

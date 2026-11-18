@@ -702,7 +702,16 @@ fn film_format_specs_change_only_physical_scale_and_preserve_custom_values() {
         assert!(h.query_by_label("Frame Long Edge").is_some());
     }
     reveal_control(h, "camera.film_format_mm");
-    for (name, mm) in [("35mm", 36.0), ("120", 56.0), ("4×5", 127.0)] {
+    for (name, mm) in [
+        ("Super 8", 5.79),
+        ("16mm", 10.26),
+        ("110", 17.0),
+        ("35mm cine", 24.9),
+        ("35mm", 36.0),
+        ("65mm", 52.6),
+        ("120", 56.0),
+        ("4×5", 127.0),
+    ] {
         choose(h, "Film Format", name);
         let mut expected = original.clone();
         expected.camera.film_format_mm = mm;

@@ -502,14 +502,27 @@ pub(crate) fn sections(
 /// Names are film specifications; values remain exposed-image long edges.
 fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T, reveal_edge: bool) -> bool {
     const PATH: &str = "camera.film_format_mm";
-    const FORMATS: [(&str, f64); 3] = [("35mm", 36.0), ("120", 56.0), ("4×5", 127.0)];
-    const HELP: &str = "Sets the physical film scale for grain and other film effects. Does not crop, resize, or change the image's aspect ratio. 35mm uses a 36 mm frame long edge; 120 uses a representative 56 mm; 4×5 uses 127 mm.";
+    const FORMATS: [(&str, f64); 8] = [
+        ("Super 8", 5.79),
+        ("16mm", 10.26),
+        ("110", 17.0),
+        ("35mm cine", 24.9),
+        ("35mm", 36.0),
+        ("65mm", 52.6),
+        ("120", 56.0),
+        ("4×5", 127.0),
+    ];
+    const HELP: &str = "Sets the physical film scale for grain and other film effects. Does not crop, resize, or change the image's aspect ratio. Long edges: Super 8 5.79 mm, 16mm 10.26 mm, 110 17 mm, 35mm cine 24.9 mm (full aperture), 35mm 36 mm, 65mm 52.6 mm (5-perf), 120 56 mm (6×6 representative), 4×5 127 mm.";
     if !row_path_matches(ui.ctx(), PATH) {
         return false;
     }
     let _identity = row_identity(ui.ctx(), PATH);
     let current = value.to_f64();
-    let preset = FORMATS.iter().position(|(_, mm)| *mm == current);
+    // Fractional long edges are stored in the control's numeric type; compare
+    // its rounded value so a selected preset does not fall back to Custom.
+    let preset = FORMATS
+        .iter()
+        .position(|(_, mm)| T::from_f64(*mm).to_f64() == current);
     let id = ui.make_persistent_id("film-format-custom");
     let reveal_id = ui.make_persistent_id("film-format-located-edge");
     if ui
@@ -575,7 +588,9 @@ fn film_format<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T, reveal_edge:
     let mut changed = false;
     if !custom && let Some(index) = selected {
         let mm = FORMATS[index].1;
-        if current != mm && row_modified::accepts_value(ui.ctx(), PATH, Value::from(mm)) {
+        if current != T::from_f64(mm).to_f64()
+            && row_modified::accepts_value(ui.ctx(), PATH, Value::from(mm))
+        {
             *value = T::from_f64(mm);
             record_edited_path(ui.ctx(), PATH);
             changed = true;

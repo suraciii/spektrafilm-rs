@@ -1236,7 +1236,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Session only. Changes apply to the next accepted operation; they do not render." => {
             Some("surfaces.diagnostics.session")
         }
-        "Sets the physical film scale for grain and other film effects. Does not crop, resize, or change the image's aspect ratio. 35mm uses a 36 mm frame long edge; 120 uses a representative 56 mm; 4×5 uses 127 mm." => {
+        "Sets the physical film scale for grain and other film effects. Does not crop, resize, or change the image's aspect ratio. Long edges: Super 8 5.79 mm, 16mm 10.26 mm, 110 17 mm, 35mm cine 24.9 mm (full aperture), 35mm 36 mm, 65mm 52.6 mm (5-perf), 120 56 mm (6×6 representative), 4×5 127 mm." => {
             Some("controls.scanner.film_format_help")
         }
         "Settings" => Some("surfaces.settings.title"),

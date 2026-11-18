@@ -44,7 +44,7 @@ Selecting the language control MAY move focus normally; dialog return focus and 
 
 Both languages MUST cover all application-owned workspace, inspector, viewer, preset-browser, Settings, Export, context-menu, and confirmation surfaces. Coverage includes control and option labels, accessible names and descriptions, tooltips, units' explanations, inactive and modified states, empty results, validation guidance, operation progress, success messages, and application-generated error explanations. Technical help MUST NOT remain English merely because it is long.
 
-Brand, material, and product names; film specification codes such as `35mm`, `120`, and `4×5`; standard color-space and illuminant names; file-format names; mathematical symbols; and unit tokens MUST retain their identity. User-authored preset names, descriptions, and paths MUST NOT be translated. Built-in descriptive text MUST be localized without renaming the underlying preset or profile.
+Brand, material, and product names; film specification codes (`Super 8`, `16mm`, `110`, `35mm cine`, `35mm`, `65mm`, `120`, `4×5`); standard color-space and illuminant names; file-format names; mathematical symbols; and unit tokens MUST retain their identity. User-authored preset names, descriptions, and paths MUST NOT be translated. Built-in descriptive text MUST be localized without renaming the underlying preset or profile.
 
 Preset card labels and thumbnail states MUST be concise, localized, and accessible. Explanatory help is disclosed on demand rather than as a default per-card paragraph; material identities remain available in accessible descriptions under [browser interaction](../presets/spec.md#browser-interaction).
 
