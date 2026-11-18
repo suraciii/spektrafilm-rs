@@ -654,7 +654,7 @@
   "controls.scanner.film_format": "胶片规格",
   "controls.scanner.frame_long_edge": "画面长边",
   "controls.scanner.custom": "自定义",
-  "controls.scanner.film_format_help": "设置颗粒及其他胶片效果所用的胶片物理尺度。不会裁剪、缩放或改变图像宽高比。35mm 使用 36 mm 的画面长边，120 使用具有代表性的 56 mm，4×5 使用 127 mm。",
+  "controls.scanner.film_format_help": "设置颗粒及其他胶片效果所用的胶片物理尺度。不会裁剪、缩放或改变图像宽高比。画面长边：Super 8 5.79 mm，16mm 10.26 mm，110 17 mm，35mm cine 24.9 mm（全孔径），35mm 36 mm，65mm 52.6 mm（5 片孔），120 56 mm（6×6 代表值），4×5 127 mm。",
   "controls.scanner.metering_method": "测光方式",
   "controls.scanner.metering_method_help": "虚拟相机自动曝光所用的测光方式。",
   "controls.scanner.metering_center": "中央重点",

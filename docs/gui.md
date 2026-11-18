@@ -55,7 +55,7 @@ Open **Settings → General → 语言 / Language** (**设置 → 通用** in Si
 
 Language changes apply immediately and persist independently of photographic GUI state. Loading a state, applying a preset, restoring startup controls, and adjustment Undo/Redo do not change the language. Switching language does not rerender the photograph, alter numeric parsing, or clear existing editing and Export drafts. A preference write failure reports that the choice could not be saved while keeping it active for the current run.
 
-Control search accepts Chinese labels, English labels, and canonical paths in either language. For example, **胶片规格**, **Film Format**, **画面长边**, and `camera.film_format_mm` locate the same control. Brand and film-stock names, `35mm`/`120`/`4×5`, standard color-space names, paths, and user-authored preset text keep their original identities. Native file choosers follow the operating system's language.
+Control search accepts Chinese labels, English labels, and canonical paths in either language. For example, **胶片规格**, **Film Format**, **画面长边**, and `camera.film_format_mm` locate the same control. Brand and film-stock names, `Super 8`/`16mm`/`110`/`35mm cine`/`35mm`/`65mm`/`120`/`4×5`, standard color-space names, paths, and user-authored preset text keep their original identities. Native file choosers follow the operating system's language.
 
 Chinese fonts are bundled for offline use; no system font installation is required. The interface supports native input-method composition in editable text. The CLI, serialized state, recipes, and diagnostic reports retain their existing machine vocabulary. The product contract is [GUI language](../specs/gui-language/spec.md#interface-language).
 
@@ -89,9 +89,9 @@ Input color-space and CCTF controls reinterpret the accepted samples; they do no
 
 ### Film Format
 
-**Input and capture → Camera → Capture setup → Film Format** offers **35mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
+**Input and capture → Camera → Capture setup → Film Format** offers **Super 8**, **16mm**, **110**, **35mm cine**, **35mm**, **65mm**, **120**, **4×5**, and **Custom**. These choices set the physical film scale for grain and other film effects. They do not crop, resize, or change the image's aspect ratio.
 
-The choices use exposed-image long edges of 36 mm, 56 mm, and 127 mm respectively. **120** uses one representative size; it does not select a square crop. **Custom** reveals **Frame Long Edge** for precise millimeter input. Opening Custom alone does not change the photograph.
+The choices use exposed-image long edges of 5.79, 10.26, 17, 24.9, 36, 52.6, 56, and 127 mm respectively. **35mm cine** uses the 24.9 mm full aperture; **65mm** uses the 52.6 mm 5-perf frame. **120** uses one representative 56 mm scale for 6×4.5 and 6×6. None of these choices selects a crop or a different aspect ratio. **Custom** reveals **Frame Long Edge** for precise millimeter input. Opening Custom alone does not change the photograph.
 
 Existing states and presets retain their exact `camera.film_format_mm` value. A value without a matching specification, including the existing 35 mm factory value, displays as Custom. Selecting a specification is one reversible adjustment; the module reset keeps the existing factory default.
 
