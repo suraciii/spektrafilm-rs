@@ -153,16 +153,33 @@ The [LUT transform](../lut-transform/spec.md#rgb-halation) owns the parameter na
 
 Film Halation is the visual reference for both schemes.
 
-The reference fixture is a linear-light image on the fixed 35 mm frame.
-It contains a neutral background, a small white highlight, and saturated red and blue highlights.
-Grain, diffusion, light leak, and LUT-grade changes are inactive.
+### Reference fixture
 
-Visual equivalence means the two halos have the same spatial extent, the same hue direction, and no perceptible difference in peak or integrated amplitude at the reference viewing size.
-The reference viewing size is the fixture at 100% display scale.
+The fixture is a 3000×2000 linear-light image on the fixed 35 mm frame.
+Its neutral background is 0.18.
+
+It carries radius-20-pixel white, red, and blue highlights.
+Grain, diffusion, light leak, and LUT Grade are inactive.
+Output is display-encoded sRGB at 100% display scale.
+
+### Metrics and tolerances
+
+The comparison uses the halo difference between halation on and off.
+It measures positive peak, half-width, peak hue ΔE00, and integrated energy.
+All three highlights MUST pass.
+
+| Metric | Tolerance |
+| --- | --- |
+| Positive peak | ±10% |
+| Half-width | ±10% |
+| Peak hue | ΔE00 ≤ 2 |
+| Integrated energy | ±15% |
+
+A pair that passes the fixture MAY claim visual equivalence.
+An unmeasured or failing pair MUST label itself experimental and MUST NOT claim equivalence.
 The target applies to the before-LUT RGB position.
 
-The RGB model matches the reference by calibrating its mask thresholds and per-channel strengths.
-The calibration MUST use the declared reference fixture.
+The calibration MUST use this fixture.
 It MUST NOT read film density, film exposure, or a film profile at runtime.
 
 Pixel equality, spectral equality, and density equality are outside the target.
