@@ -106,6 +106,9 @@ _Avoid_: Halation mode
 **Effect order**: The position of an RGB film effect relative to the LUT: before the look or after the look. It is a parameter, not an effect model.
 _Avoid_: Pre-look halation, post-look halation
 
+**Effect track**: The declared relationship between an effect capability and the two simulation methods: shared, dual-track, or single-track.
+_Avoid_: Effect mode, effect route
+
 **Film route**: The spectral stage sequence inside Film mode, such as `input > film > print > scan`. It is serialized as `workflow.route` and is inactive outside Film mode.
 _Avoid_: Workflow mode, render workflow
 
