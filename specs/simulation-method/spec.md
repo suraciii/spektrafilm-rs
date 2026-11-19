@@ -40,6 +40,15 @@ RGB does not name the output format; a Spectral simulation also outputs RGB.
 - `workflow.mode` remains `film`, `lut`, or `off`.
 - The product MUST NOT add a fourth render mode.
 
+## Effect tracks
+
+- Every effect capability MUST declare one track model: shared, dual-track, or single-track.
+- A shared model runs in both methods and MUST declare its input-domain mapping.
+- A dual-track capability MUST define separate input, parameters, and output composition for each method.
+- A single-track capability MUST state why the other method has no counterpart.
+- A capability MUST NOT claim dual-track status by renaming one shared model.
+- [Halation models](../halation/spec.md) is the reference dual-track contract.
+
 ## Presentation
 
 Visible labels follow [GUI language](../gui-language/spec.md#simulation-method-and-halation-labels).
