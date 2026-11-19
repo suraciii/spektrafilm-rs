@@ -98,7 +98,7 @@ The stack MUST select exactly one method: Film or RGB.
 | Method group | One method; only that method's group. |
 | Shared fields | Source interpretation, seed, output crop, and per-exposure offsets. |
 | Film fields | Film selection, print reference, and metering policy. |
-| RGB fields | LUT declaration and Effects values. |
+| RGB fields | LUT declaration, LUT Grade, and Effects values. |
 
 A failed memory check MUST publish no output.
 

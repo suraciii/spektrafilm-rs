@@ -39,13 +39,13 @@ A multiple-exposure stack is the ordered set of two to eight exposures.
 | Determinism | The stack MUST be deterministic for the same sources, offsets, controls, seed, and backend. |
 | Backend parity | CPU and GPU MUST use the same composition semantics. |
 | Memory | A failed memory check MUST publish no output. |
-| Preview | A preview MUST render the same composite at a reduced long edge. |
+| Preview | A preview MUST use the same composition and effect order at a reduced long edge. |
 
 ## Film Multiple Exposure
 
 - Each exposure MUST pass source interpretation, metering, camera conversion, and the camera-side film exposure operations.
 - The camera-side operations include camera diffusion, lens blur, camera light leak, and Film Halation.
-- Every exposure MUST share the selected film, route, source interpretation, working geometry, and working pitch.
+- Every exposure MUST share the selected film, print reference, route, source interpretation, working geometry, and working pitch.
 - The offset MUST apply after metering and before the camera-side optical operations.
 - Composition MUST add record exposure before the density curve. It MUST NOT add density.
 - The density curve, DIR couplers, and material grain MUST run once after the last exposure.
@@ -89,7 +89,7 @@ Film Multiple Exposure MUST follow the [Film chain](../film-chain/spec.md) stage
 | Seed | One deterministic seed for the stack. |
 | Memory bound | Optional host-memory bound. |
 | Film group | Film selection, print reference, and metering. |
-| RGB group | LUT declaration and Effects values. |
+| RGB group | LUT declaration, LUT Grade, and Effects values. |
 | Weights | Not admitted; offsets express relative exposure. |
 | Per-exposure transform | Not admitted. |
 | Per-exposure preset | Not admitted. |

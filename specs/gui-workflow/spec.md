@@ -245,6 +245,8 @@ The stored `LutHalationParams` values remain authoritative; the primary controls
 | `Intensity` | The largest stored strength. |
 | `Threshold` | The stored mask low. |
 
+When the displayed Radius or Intensity is zero, a primary edit MUST set all three stored values to the new value.
+
 A `Radius` edit MUST scale all three stored sigma values by one factor.
 An `Intensity` edit MUST scale all three stored strength values by one factor.
 A `Threshold` edit MUST move the stored mask window to the new lower bound and preserve its width.

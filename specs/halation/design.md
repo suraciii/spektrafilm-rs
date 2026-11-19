@@ -114,15 +114,20 @@ Here `low` is the low threshold, `high` is the high threshold, `t` is the transi
 The halo is:
 
 \[
-H_c = s_c\,(G_\sigma * m_c),
+H_c = s_c\,L_c,
 \]
 
-where `s_c` is the per-channel strength and `G_sigma` is the shared kernel.
+where `s_c` is the per-channel strength and `L_c` is the shared spatial response applied to `m_c`.
+`L_c` uses the per-channel first sigma, bounce count, and bounce decay from the [shared kernel](#shared-kernel).
 
-The RGB model MAY use a two-scale Gaussian approximation of the Film multi-bounce response.
+The RGB model MAY use a two-scale Gaussian approximation of `L_c`.
 The approximation MUST be fitted to the Film response and verified on the reference fixture.
+It MUST preserve the declared bounce count and decay response; it MUST NOT ignore those controls.
 
 The model MUST NOT renormalize the result.
+
+When every RGB first sigma is zero, RGB Halation MUST be an exact bypass.
+Within an active response, a zero sigma channel uses a near-delta response.
 
 The model adds:
 
@@ -199,5 +204,6 @@ The RGB model MUST NOT claim them.
 4. The RGB mask preserves hue and per-channel amplitude.
 5. RGB Halation runs before the LUT.
 6. Inactive scheme values are retained and unread.
-7. The kernel returns a halo layer without strength, scatter, compression, or renormalization.
-8. A zero first sigma is a near-delta response; when every first sigma is zero, the response is inactive and no renormalization runs.
+7. All-zero RGB sigma is an exact bypass; a zero channel within an active response is near-delta.
+8. The kernel returns a halo layer without strength, scatter, compression, or renormalization.
+9. A zero Film first sigma is a near-delta response; when every Film first sigma is zero, the response is inactive and no renormalization runs.
