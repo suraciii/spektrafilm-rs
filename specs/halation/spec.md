@@ -21,6 +21,18 @@ They do not share input preparation, masks, output composition, or parameter val
 
 Effect type follows input.
 
+### Visual equivalence
+
+Film and RGB Halation are not pixel-identical.
+They share one spatial response and one visual target.
+Given the declared reference fixture and each model's calibrated parameters, the RGB halo MUST match the Film halo in extent, amplitude, and hue.
+
+Visual equivalence is evaluated after the display transform on the halo difference between halation on and off.
+Pixel equality, spectral equality, and density equality are outside the target and MUST NOT be claimed.
+
+Film Halation is the visual reference.
+The RGB model is calibrated to that reference with its own mask thresholds and strengths.
+
 ## Shared contract
 
 | Scheme | Input | Highlight mask | Output composition |
@@ -45,7 +57,9 @@ The Film Input is not camera RAW.
 - Film Halation runs before development and scan.
 - It MAY include in-emulsion scatter, highlight reconstruction, source compression, and renormalization.
 - Its first sigma and strength are per-channel film-plane values.
-- It MUST NOT use an RGB highlight mask.
+- It MUST use the Film Input as the halo source; it MUST NOT apply an RGB mask or an implicit source clamp.
+- Highlight reconstruction runs only while Film Halation is active.
+- A zero `halation_spatial_scale` produces no halation response and no renormalization.
 - Its highlight reconstruction fields MUST NOT serve as RGB mask thresholds.
 
 ### Parameters
@@ -69,6 +83,7 @@ RGB Halation reads the RGB Input.
 
 - RGB Halation selects highlights by the maximum channel of the RGB Input.
 - It scales each channel by that channel's source amplitude.
+- Its mask thresholds are visual calibration values, not film exposure thresholds.
 - The mask MUST preserve source hue.
 - A saturated red source MUST produce a red halation.
 - A saturated blue source MUST produce a blue halation.
@@ -119,3 +134,5 @@ An inactive scheme MUST retain its stored values and MUST NOT be read or validat
 1. Film mode executes Film Halation; LUT and Off execute RGB Halation.
 2. RGB Halation preserves red and blue source hue and increases with source level above the low threshold and below the high protection range.
 3. Film and RGB Halation parameters remain independent; neither scheme reads the other scheme's fields.
+4. The RGB halo matches the Film halo in extent, amplitude, and hue on the reference fixture.
+5. A zero Film spatial scale produces no halation response and no renormalization.

@@ -177,6 +177,10 @@ Effects are active in LUT and Off. LUT Grade is active only in LUT. Film mode do
 
 RGB Halation follows [Halation model design](../halation/design.md#rgb-halation-model).
 
+The RGB model is calibrated against the Film reference fixture.
+Calibration adjusts mask thresholds and per-channel strengths until halo extent, amplitude, and hue match.
+The result stays in `LutHalationParams`; it does not create a film-density dependency.
+
 The LUT transform owns its stage placement and effect-order control.
 
 The effect parameter group is `LutHalationParams`.
@@ -205,6 +209,9 @@ pub struct LutHalationParams {
 ```
 
 Mask thresholds and transition are linear-light values. The sigma values are micrometres on the fixed 35 mm reference frame.
+
+The thresholds are calibration controls for the Film visual target under [Halation model design](../halation/design.md#visual-equivalence).
+They MUST NOT be derived from film density or film exposure at runtime.
 
 The type MUST NOT carry film source-response, scatter, compression, or renormalization fields.
 

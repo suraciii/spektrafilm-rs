@@ -254,6 +254,46 @@ fn optical_chunks_preserve_glare_rng_and_reference_blur_across_seams() {
 }
 
 #[test]
+fn halation_zero_sigma_channel_stays_unchanged_with_renormalization() {
+    let backend = crate::test_support::adapter();
+    let _restore = RestoreLimit(std::env::var_os("SPEKTRAFILM_GPU_BINDING_LIMIT_BYTES"));
+    let width: u32 = 9;
+    let height: u32 = 1;
+    let mut values = vec![0.0f32; width as usize * height as usize * 3];
+    for x in 0..width {
+        values[x as usize * 3] = 0.05 + x as f32 * 0.1;
+        values[x as usize * 3 + 1] = 0.4;
+        values[x as usize * 3 + 2] = 0.2;
+    }
+    let input = values.clone();
+    let hp = spektrafilm_backend::HalationGpuParams {
+        scatter_amount: 0.0,
+        scatter_core_px: [0.0; 3],
+        scatter_tail_px: [0.0; 3],
+        scatter_tail_weight: [0.0; 3],
+        source_compression: 0.0,
+        halation_a_tot: [0.2, 0.1, 0.04],
+        halation_first_sigma_px: [0.0, 1.5, 2.5],
+        halation_n_bounces: 2,
+        halation_bounce_decay: 0.5,
+        halation_renormalize: true,
+    };
+    let img = image(&backend, &values);
+    let mut scratch = super::super::blur::GaussianScratch::new(width, height);
+    let state = build_halation_state(&hp, width, height, &img, &mut scratch, &backend).unwrap();
+    state.submit(&backend).unwrap();
+    let got = readback(&backend, &img);
+    for pixel in 0..width as usize * height as usize {
+        let before = input[pixel * 3];
+        let after = got[pixel * 3];
+        assert!(
+            (after - before).abs() < 5e-5,
+            "pixel {pixel}: zero-sigma channel {after} != {before}"
+        );
+    }
+}
+
+#[test]
 fn unsharp_combine_chunks_at_binding_capacity_not_alias_cap() {
     use spektrafilm_backend::telemetry::{CollectionMode, ObservationContext};
 

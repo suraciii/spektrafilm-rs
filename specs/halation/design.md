@@ -40,7 +40,8 @@ Each model supplies its own source and output composition.
 
 The kernel MUST use a positive pitch and MUST NOT clamp it to a fixed minimum.
 
-A channel with zero sigma MUST produce no halo and MUST NOT enter renormalization.
+A zero first sigma is a delta kernel.
+The model wrapper owns activation and renormalization.
 
 ## Film Halation model
 
@@ -65,11 +66,22 @@ Its parameters are film-plane values.
 
 The scatter mixture MUST preserve energy: `(1 - scatter_amount) * I + scatter_amount * ((1 - tail_weight) * G_core + tail_weight * E_tail)`.
 
-The film model MUST clamp the halo source to nonnegative values.
+The Film model uses the Film Input as the halo source.
+It MUST NOT clamp the source or apply an RGB mask.
 
-Renormalization MUST divide each active channel by one plus its effective halation amplitude. A zero-sigma channel MUST NOT be renormalized.
+The model activates the response only when at least one effective amplitude is positive and at least one effective first sigma is positive.
+When no effective first sigma is positive, the model returns the Film Input unchanged and does not renormalize.
+Within an active response, a zero first sigma uses the near-delta floor of `1e-6` pixels and remains in renormalization.
 
-Active Film Halation MUST reject nonfinite values, `scatter_amount` outside `[0, 1]`, `scatter_tail_weight` outside `[0, 1]`, negative widths, scales, amounts, or strengths, a zero bounce count, and `halation_bounce_decay` outside `[0, 1]`.
+Scatter runs when `scatter_amount` is positive and at least one channel width is positive.
+A zero width uses the near-delta floor.
+The scatter mixture MUST preserve energy: `(1 - scatter_amount) * I + scatter_amount * ((1 - tail_weight) * G_core + tail_weight * E_tail)`.
+
+Renormalization MUST divide each channel by one plus its effective halation amplitude.
+A zero-amplitude channel is divided by one.
+
+A zero bounce count produces no response.
+Active Film Halation MUST reject nonfinite values, `scatter_amount` outside `[0, 1]`, `scatter_tail_weight` outside `[0, 1]`, negative widths, scales, amounts, or strengths, and `halation_bounce_decay` outside `[0, 1]`.
 
 The [Film chain](../film-chain/spec.md#film-halation-source-response) owns the parameter names, units, and source-response behavior.
 
@@ -129,6 +141,24 @@ The [LUT transform](../lut-transform/spec.md#rgb-halation) owns the parameter na
 
 `LutHalationParams` is the wire type for RGB Halation; the domain term is RGB Halation.
 
+## Visual equivalence
+
+Film Halation is the visual reference for both schemes.
+
+The reference fixture is a linear-light image on the fixed 35 mm frame.
+It contains a neutral background, a small white highlight, and saturated red and blue highlights.
+Grain, diffusion, light leak, and LUT-grade changes are inactive.
+
+Visual equivalence means the two halos have the same spatial extent, the same hue direction, and no perceptible difference in peak or integrated amplitude at the reference viewing size.
+The reference viewing size is the fixture at 100% display scale.
+
+The RGB model matches the reference by calibrating its mask thresholds and per-channel strengths.
+The calibration MUST use the declared reference fixture.
+It MUST NOT read film density, film exposure, or a film profile at runtime.
+
+Pixel equality, spectral equality, and density equality are outside the target.
+The RGB model MUST NOT claim them.
+
 ## Ownership
 
 | Boundary | Owner |
@@ -166,4 +196,4 @@ The [LUT transform](../lut-transform/spec.md#rgb-halation) owns the parameter na
 5. Effect order is a parameter, not a scheme.
 6. Inactive scheme values are retained and unread.
 7. The kernel returns a halo layer without strength, scatter, compression, or renormalization.
-8. A zero-sigma channel produces no halo and no renormalization.
+8. A zero first sigma is a near-delta response; when every first sigma is zero, the response is inactive and no renormalization runs.

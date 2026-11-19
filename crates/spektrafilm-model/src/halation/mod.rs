@@ -59,13 +59,15 @@ pub fn apply_halation_um(
     // f64 sigmas/lambdas — Python casts these via
     // `np.asarray(..., dtype=np.float64) * s_scale / pixel_size_um`.
     let pix_um_f64 = pixel_size_um as f64;
-    if scatter_amount > 0.0 {
+    let scatter_active = scatter_amount > 0.0
+        && (0..3).any(|c| {
+            scatter_core_um[c] * scatter_spatial_scale > 0.0
+                || scatter_tail_um[c] * scatter_spatial_scale > 0.0
+        });
+    if scatter_active {
         for c in 0..3 {
             let sigma_c_px_f64 = scatter_core_um[c] * scatter_spatial_scale / pix_um_f64;
             let lambda_t_px_f64 = scatter_tail_um[c] * scatter_spatial_scale / pix_um_f64;
-            if sigma_c_px_f64 <= 0.0 && lambda_t_px_f64 <= 0.0 {
-                continue;
-            }
             let sigma_c_px = sigma_c_px_f64.max(1e-6);
             let lambda_t_px = lambda_t_px_f64.max(1e-6);
             let core = gaussian_blur_channel(&channels[c], w, h, sigma_c_px);
@@ -88,10 +90,17 @@ pub fn apply_halation_um(
         halation_strength[1] * halation_amount,
         halation_strength[2] * halation_amount,
     ];
-    let source_channels = if source_compression > 0.0
-        && halation_n_bounces > 0
+    let sigma_first_px: [f64; 3] =
+        std::array::from_fn(|c| halation_first_sigma_um[c] * halation_spatial_scale / pix_um_f64);
+    // The reference activates the whole halation block only when at least
+    // one amplitude and at least one first sigma are positive. A zero
+    // sigma channel inside an active block is a near-delta blur that still
+    // participates in renormalization.
+    let halation_active = halation_n_bounces >= 1
         && a_tot.iter().any(|&value| value > 0.0)
-    {
+        && sigma_first_px.iter().any(|&value| value > 0.0);
+
+    let source_channels = if source_compression > 0.0 && halation_active {
         let mut source = channels.clone();
         for i in 0..n_pix {
             let peak = channels
@@ -115,7 +124,7 @@ pub fn apply_halation_um(
         None
     };
 
-    if halation_n_bounces >= 1 && (a_tot[0] > 0.0 || a_tot[1] > 0.0 || a_tot[2] > 0.0) {
+    if halation_active {
         let n_bounces = halation_n_bounces as usize;
         // Decay computed in f64 to match Python's `rho ** (k - 1)` and
         // subsequent normalize-by-sum at full f64 precision.
@@ -132,14 +141,9 @@ pub fn apply_halation_um(
             if a_tot[c] == 0.0 {
                 continue;
             }
-            let sigma_first_px_f64 =
-                halation_first_sigma_um[c] * halation_spatial_scale / pix_um_f64;
-            if sigma_first_px_f64 <= 0.0 {
-                continue;
-            }
             let mut hb = vec![ZERO; n_pix];
             for (k, &wk) in decay.iter().enumerate() {
-                let sigma_k = (sigma_first_px_f64 * ((k as f64) + 1.0).sqrt()).max(1e-6);
+                let sigma_k = (sigma_first_px[c] * ((k as f64) + 1.0).sqrt()).max(1e-6);
                 let blurred = source_channels.as_ref().map_or_else(
                     || gaussian_blur_channel(&channels[c], w, h, sigma_k),
                     |source| gaussian_blur_channel(&source[c], w, h, sigma_k),
@@ -221,5 +225,50 @@ mod tests {
         let compressed_secondary = to_f64(compressed.get(5, 0)[0]);
         let compressed_primary = to_f64(compressed.get(1, 0)[0]);
         assert!(compressed_secondary / compressed_primary > linear_secondary / linear_primary);
+    }
+
+    fn render_halation(scale: f64, first_sigma_um: [f64; 3], strength: [f64; 3]) -> ImageBuf {
+        let mut image = ImageBuf::new(9, 1);
+        image.set(2, 0, [from_f64(1.0), from_f64(0.5), from_f64(0.25)]);
+        image.set(6, 0, [from_f64(0.25), from_f64(0.1), ZERO]);
+        apply_halation_um(
+            &image,
+            1.0,
+            0.0,
+            1.0,
+            [0.0; 3],
+            [0.0; 3],
+            [0.0; 3],
+            0.1,
+            scale,
+            0.0,
+            strength,
+            first_sigma_um,
+            3,
+            0.5,
+            true,
+            &CpuBackend,
+        )
+    }
+
+    #[test]
+    fn zero_spatial_scale_is_identity_with_renormalization() {
+        let source = render_halation(1.0, [65.0; 3], [0.0; 3]);
+        let output = render_halation(0.0, [65.0; 3], [0.15, 0.045, 0.005]);
+        assert_eq!(source.data, output.data);
+    }
+
+    #[test]
+    fn zero_sigma_channel_is_identity_with_renormalization() {
+        let source = render_halation(1.0, [0.0, 65.0, 65.0], [0.0; 3]);
+        let output = render_halation(1.0, [0.0, 65.0, 65.0], [0.15, 0.045, 0.005]);
+        for i in 0..9 {
+            let before = to_f64(source.get(i, 0)[0]);
+            let after = to_f64(output.get(i, 0)[0]);
+            assert!(
+                (after - before).abs() < 1e-5,
+                "pixel {i}: {after} != {before}"
+            );
+        }
     }
 }
