@@ -55,6 +55,9 @@ The LUT declaration MUST include:
 
 The supported input and output encodings are linear sRGB, display-encoded sRGB, and display-encoded Display P3. Camera-RGB LUTs are not admitted in this contract.
 
+The linear working RGB space is linear sRGB.
+Diffusion and RGB Halation evaluate in that space.
+
 The domain policy is either fail on out-of-domain input or an explicit clamp. The import UI MUST preselect clamp, and the declaration MUST carry the selected policy. The import UI MUST expose fail as a strict option and explain both policies at the decision point.
 
 A missing, ambiguous, or unsupported color-space declaration MUST fail before output. The product MUST NOT infer a color space from a filename, a film profile, or image content.

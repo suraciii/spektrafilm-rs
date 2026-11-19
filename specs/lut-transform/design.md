@@ -54,6 +54,8 @@ Inactive mode values are retained as stored parameters. They are not consumed an
 
 ## Evaluation order
 
+The linear working RGB space is linear sRGB.
+
 LUT mode MUST evaluate in this order:
 
 ```text

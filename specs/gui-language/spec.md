@@ -99,6 +99,9 @@ The interface MUST NOT present `Appearance`, `Non Spectral`, `Non-Spectral`, or 
 
 An effect-order control MUST use `Before look` and `After look`; it MUST NOT create a second halation model.
 
+`Look` in these labels means the 3D LUT transform, not LUT Grade.
+Diffusion bloom and Halation MUST remain separate controls and labels.
+
 ### Search and text entry
 
 Control search MUST match Simplified Chinese and English labels, module and destination names, and exact canonical paths in either interface language. Alternate visible labels, including Frame Long Edge, MUST remain searchable through their one canonical owner. Results MUST use the selected presentation language and retain technical paths as secondary detail.
