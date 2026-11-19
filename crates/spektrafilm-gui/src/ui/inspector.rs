@@ -1240,28 +1240,18 @@ fn effects_controls(
             *changed = true;
         }
         egui::CollapsingHeader::new(crate::i18n::text(ui.ctx(), "surfaces.lut.halation_advanced"))
-            .default_open(false)
-            .show(ui, |ui| {
-                for (channel, label) in ["R", "G", "B"].into_iter().enumerate() {
-                    *changed |= ui
-                        .add(
-                            egui::Slider::new(&mut effects.halation.sigma_um[channel], 0.0..=200.0)
-                                .text(format!(
-                                    "{} {label} (µm)",
-                                    crate::i18n::text(ui.ctx(), "surfaces.lut.sigma")
-                                )),
-                        )
-                        .changed();
-                    *changed |= ui
-                        .add(
                             egui::Slider::new(&mut effects.halation.strength[channel], 0.0..=4.0)
                                 .text(format!(
                                     "{} {label}",
                                     crate::i18n::text(ui.ctx(), "surfaces.lut.strength")
                                 )),
-                        )
-                        .changed();
-                }
+        egui::CollapsingHeader::new(crate::i18n::text(
+            ui.ctx(),
+            "surfaces.lut.halation_advanced",
+        ))
+        .default_open(false)
+        .show(ui, |ui| {
+            for (channel, label) in ["R", "G", "B"].into_iter().enumerate() {
                 *changed |= ui
                     .add(
                         egui::Slider::new(
@@ -1269,6 +1259,11 @@ fn effects_controls(
                             0.0..=(effects.halation.mask_high - 1.0e-6).max(0.0),
                         )
                         .text(crate::i18n::text(ui.ctx(), "surfaces.lut.mask_low")),
+                        egui::Slider::new(&mut effects.halation.sigma_um[channel], 0.0..=200.0)
+                            .text(format!(
+                                "{} {label} (µm)",
+                                crate::i18n::text(ui.ctx(), "surfaces.lut.sigma")
+                            )),
                     )
                     .changed();
                 *changed |= ui
@@ -1278,6 +1273,12 @@ fn effects_controls(
                             (effects.halation.mask_low + 1.0e-6)..=4.0,
                         )
                         .text(crate::i18n::text(ui.ctx(), "surfaces.lut.mask_high")),
+                        egui::Slider::new(&mut effects.halation.strength[channel], 0.0..=4.0).text(
+                            format!(
+                                "{} {label}",
+                                crate::i18n::text(ui.ctx(), "surfaces.lut.strength")
+                            ),
+                        ),
                     )
                     .changed();
                 *changed |= ui
