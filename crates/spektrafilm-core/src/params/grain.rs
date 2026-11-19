@@ -321,10 +321,10 @@ pub struct GrainParams {
     #[serde(default = "default_dye_strength")]
     pub dye_strength: f64,
     /// Relative Dye grain size in film coordinates. `1.0` keeps the
-    /// delivered correlation length; larger values scale the base cell, every
-    /// active layer's relative cell scale, and the positive microcontrast cell
-    /// together. It is not a crystal diameter, scanner blur, or output-pixel
-    /// size. Dye-only.
+    /// delivered coarse correlation length; larger values scale the coarse
+    /// base cell and every active layer's relative cell scale. The positive
+    /// microcontrast cell stays fixed at 9 µm. It is not a crystal diameter,
+    /// scanner blur, or output-pixel size. Dye-only.
     #[serde(default = "default_dye_size")]
     pub dye_size: f64,
     /// Relative separation of the three color records' grain fields.

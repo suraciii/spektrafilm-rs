@@ -18,9 +18,9 @@ This context defines the domain language for the film-coordinate Dye grain model
 
 **Dye correlation length**: The value-noise cell scale of the field in film coordinates. At relative size `1`, negative profiles deliver 14.0 µm and positive profiles deliver 7.0 µm.
 
-The public `dye_size` scales this base, every active layer's relative cell, and the positive microcontrast cell. It is independent of the output grid and event area.
+The public `dye_size` scales this coarse base and every active layer's relative coarse cell. It does not scale the positive microcontrast cell. It is independent of the output grid and event area.
 
-**Dye microcontrast component**: An independent value-noise lattice mixed into the positive field by variance at a finer delivered cell. It sharpens the texture without replacing the base correlation length; negative profiles carry none.
+**Dye microcontrast component**: An independent value-noise lattice mixed into the positive field by variance at a fixed 9.0 µm cell. It adds a second scale without being scaled by `dye_size`; at large size it does not replace the coarse base correlation length, and at size `1` it overlaps that base. Negative profiles carry none.
 
 **Dye event area**: The mass represented by one stochastic dye event. It controls count variance through the conditional count law; it is not a microscopic crystal area.
 

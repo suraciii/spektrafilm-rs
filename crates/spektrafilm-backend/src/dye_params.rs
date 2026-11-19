@@ -75,7 +75,7 @@ pub struct DyeGpuParams {
 pub mod law {
     /// Delivered base cell size of the value-noise field in micrometres.
     /// There is no octave stack; profile density layers carry the multi-layer
-    /// structure, and positive profiles add one finer microcontrast component.
+    /// structure, and positive profiles add one fixed microcontrast component.
     pub const VALUE_BASE_UM: f64 = 14.0;
     /// Converts one smoothstep value-noise field to unit variance. Measured
     /// from the same process the CPU and device evaluate.
@@ -95,10 +95,12 @@ pub mod law {
     /// modulation to a smaller encoded contrast than a print scan; the positive
     /// delivered law therefore carries twice the negative amplitude.
     pub const POSITIVE_AMPLITUDE_SCALE: f64 = 2.0;
-    /// Relative cell of the positive microcontrast component.
-    pub const POSITIVE_FINE_SCALE: f64 = 0.55;
+    /// Delivered cell of the positive microcontrast component, in micrometres.
+    /// It is fixed in film coordinates so `dye_size` controls only the coarse
+    /// material cell. It must remain above the reference source pixel.
+    pub const POSITIVE_FINE_UM: f64 = 9.0;
     /// Variance fraction carried by the positive microcontrast component.
-    pub const POSITIVE_FINE_WEIGHT: f64 = 0.35;
+    pub const POSITIVE_FINE_WEIGHT: f64 = 0.60;
     /// Relative density amplitude per record.
     pub const STRENGTH: [f64; 3] = [1.0, 1.0, 1.18];
     /// Shared fraction retained by the monochrome law and the previous

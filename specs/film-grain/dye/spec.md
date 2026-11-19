@@ -18,15 +18,15 @@ The profile's one to three density layers MUST split `t` pointwise into non-nega
 
 The layer relative amplitude MUST follow the normalized material layer-variance envelope `sqrt(p * (1 - uniformity * p))`. It MUST vanish at clear base and at the asymptotic saturation `p = 1 / uniformity`, above the sampled layer peak; the sampled peak MUST retain a positive residual.
 
-Each layer realizes its own coordinate-addressed value-noise field and conditional count; the realized layer densities MUST sum to `D`. The field MUST be a variance-preserving mixture of a base value-noise lattice and, for positive profiles, a finer microcontrast lattice.
+Each layer realizes its own coordinate-addressed value-noise field and conditional count; the realized layer densities MUST sum to `D`. The field MUST be a variance-preserving mixture of a base value-noise lattice and, for positive profiles, an additional microcontrast lattice.
 
 The field MUST be realized on the film lattice and read out through the requested output geometry. Cropping, preview scaling, tiling, and stage splitting MUST NOT change the realization of a film coordinate.
 
 The delivered value-noise base cell MUST depend on profile polarity. Negative profiles retain the delivered negative base; positive profiles use half that base. Positive profiles MUST also carry the delivered microcontrast component; negative profiles MUST NOT.
 
-The delivered positive cell MUST be finer than the negative cell. It MUST occupy at least one source pixel at the 35 mm 1:1 reference geometry with a 3.66 µm source pitch. It MUST NOT be replaced by a subpixel field.
+The delivered positive coarse cell MUST be finer than the negative coarse cell. It MUST occupy at least one source pixel at the 35 mm 1:1 reference geometry with a 3.66 µm source pitch. It MUST NOT be replaced by a subpixel field.
 
-The positive microcontrast cell MUST be at least one source pixel at the same reference geometry. It carries a minority of the field variance so the base cell remains the dominant correlation length.
+The positive microcontrast cell MUST be fixed in film coordinates at 9.0 µm. It MUST occupy at least one source pixel at the same reference geometry. It carries 60% of the field variance so the coarse cell remains the dominant correlation length at large `dye_size`.
 
 The positive layer carrying the largest normal-density share MUST remain on that base cell, not a finer relative layer scale.
 
@@ -51,24 +51,24 @@ Changing film geometry MUST preserve requested output raster dimensions while ch
 | Control | Key | Range | Default | Meaning |
 |---|---|---|---|---|
 | Grain strength | `film_render.grain.dye_strength` | `[0, 4]` | `1.0` | Relative amplitude of the stochastic field and count deviation on the polarity's delivered scale |
-| Dye grain size | `film_render.grain.dye_size` | `[1, 4]` | `1.0` | Relative correlation length in film coordinates; scales the delivered base, layer ladder, and microcontrast cells together |
+| Dye grain size | `film_render.grain.dye_size` | `[1, 16]` | `1.0` | Relative coarse correlation length in film coordinates; scales the delivered base and layer ladder, while the positive microcontrast cell stays fixed |
 | Inter-record grain separation | `film_render.grain.dye_color_grain` | `[0, 1]` | `0.75` | Separation of the three color records' grain fields: `0` shares one field, `1` gives each record its own |
 
 `film_render.grain.active` owns the enable switch. No other Dye value is a public control.
 
 Grain strength MUST scale the correlated field's standard deviation and the event count's standard deviation by the same factor. It MUST preserve `E[D] = t`, the derived density taper, and the per-record ratio. It is a relative strength control, not a certified optical RMS target or material calibration.
 
-Dye grain size MUST scale the film-coordinate delivered correlation length relative to the polarity's base cell. It MUST scale the base cell, every active layer's relative cell, and the positive microcontrast cell by the same factor.
+Dye grain size MUST scale the film-coordinate coarse correlation length relative to the polarity's base cell. It MUST scale the base cell and every active layer's relative cell. It MUST NOT scale the positive microcontrast cell, which stays fixed at 9.0 µm.
 
 It MUST NOT change `E[D]`, the per-sample field variance, the event area, the amplitude mapping, or the count and field streams. At a fixed seed and aperture, the changed correlation length MAY change aperture-integrated granularity and perceived grain; this is not a tone shift.
 
-The control is a relative film-coordinate size, not a crystal diameter, scanner blur, output-pixel size, or magnification.
+The control is a relative coarse film-coordinate size, not a crystal diameter, scanner blur, output-pixel size, or magnification.
 
 Inter-record grain separation MUST map to the record coupling as `rho = 1 - color_grain`. It MUST preserve `E[D] = t`, the density taper, the per-record amplitude ratio, and the overall amplitude. It changes the cross-record covariance, not image saturation.
 
 A monochrome profile ignores the distinction and keeps its single effective record and delivered coupling; the GUI hides the control. Values outside `[0, 1]` MUST fail before rendering.
 
-The delivered positive strength scale MUST be twice the delivered negative scale at the same public strength. This polarity constant compensates the density-to-encoded contrast of a direct positive scan; it is engine calibration, not a second control.
+The delivered positive strength scale MUST be twice the delivered negative scale at the same public strength. This polarity constant compensates the density-to-encoded contrast of a direct positive scan; it is engine calibration, not a second control. The positive microcontrast variance fraction is 0.60 and is fixed, not an appearance control.
 
 Grain strength `0` MUST return the target density at the Dye boundary with no random field and no residual count noise. `1` MUST leave the delivered law unchanged. Values outside the declared range MUST fail before rendering.
 
@@ -84,7 +84,7 @@ Dye's remaining law parameters are engine-derived constants: the per-record rela
 
 The profile's density-layer curves determine the layer targets, the layer count, and each layer/channel sampled density peak `dmax`; they are material data, not appearance controls. A one-layer profile and a profile without layer curves use the composite curve peak, because neither is split into layer targets. The engine fallback applies only when no usable positive curve exists.
 
-The engine owns each active layer's relative correlation scale and the polarity's delivered base cell. `dye_size` scales those film-coordinate cells without exposing a per-layer control.
+The engine owns each active layer's relative correlation scale, the polarity's delivered base cell, and the fixed positive microcontrast cell. `dye_size` scales the coarse base and ladder without exposing a per-layer control or moving the microcontrast cell.
 
 The per-record ratio remains an advanced candidate, not a public control. It MUST NOT be exposed until it has a validated direction, range, and interaction with grain strength. Record coupling is exposed as inter-record grain separation: its direction is monotone, its range is `[0, 1]`, and it preserves the strength mapping and mean.
 
@@ -154,24 +154,24 @@ Acceptance is gated. A later gate MUST NOT compensate for an earlier gate that f
 - **Defaults:** An omitted or `1.0` strength MUST produce the delivered field bit for bit on each executor.
 - **Zero strength:** Strength `0` MUST return the target density at the Dye boundary. A final encoded comparison MUST state its downstream route and settings.
 - **Amplitude:** At fixed seed, geometry, and output footprints, strengths `0.5`, `1`, and `2` MUST produce monotonically increasing realized standard deviation while the mean stays at the target within the declared tolerance.
-- **Handoff:** The CPU and device MUST receive the same mapped field amplitude, event area, delivered correlation scale and relative size mapping, microcontrast scale and weight, and profile layer table. A delivered cell that cannot form a finite positive cell size MUST fail before allocation.
+- **Handoff:** The CPU and device MUST receive the same mapped field amplitude, event area, delivered correlation scale and relative size mapping, fixed microcontrast cell and weight, and profile layer table. A delivered cell that cannot form a finite positive cell size MUST fail before allocation.
 - **Validity:** Every output MUST be finite. The acceptance record MUST report the tested stock, route, executor, target mean, channel bias, and spatial statistic.
 
 ### Grain-size acceptance
 
 - **Default identity:** An omitted or `1.0` size MUST produce the delivered field bit for bit on each executor. The default MUST NOT change the existing strength, separation, microcontrast, event-area, or stream mapping.
-- **Mapping:** At sizes `1`, `2`, and `4`, the delivered base cell, every active layer's relative cell, and the positive microcontrast cell MUST all scale by the same factor. The CPU and device MUST receive the same mapped correlation length on negative and positive profiles.
+- **Mapping:** At sizes `1`, `2`, `4`, `8`, `10`, and `16`, the delivered coarse base cell and every active layer's relative cell MUST scale by the size factor; the positive microcontrast cell MUST remain at 9.0 µm. The CPU and device MUST receive the same mapped coarse and fine scales on negative and positive profiles.
 - **Mean and amplitude:** At fixed seed, geometry, target, and strength, changing size MUST leave the expectation at the target and MUST NOT change the per-sample field variance, event area, or strength mapping. The realization MAY differ because the film-coordinate lattice changes; that is not reseeding.
 - **Correlation:** At fixed seed, geometry, and target, increasing size MUST increase the dominant correlation length. An acceptance record that reports aperture-integrated RMS or visible granularity MUST state its aperture and MUST NOT claim invariance.
-- **Validity:** Values below `1` or above `4` MUST fail before rendering.
+- **Validity:** Values below `1` or above `16` MUST fail before rendering.
 
 ### Texture acceptance
 
 - **Positive default cell:** At the 3.66 µm reference pitch, the delivered positive base cell MUST be finer than the negative cell and at least one source pixel wide. It MUST be about two source pixels per cell.
-- **Positive microcontrast cell:** At the same reference pitch, the delivered microcontrast cell MUST be at least one source pixel wide.
+- **Positive microcontrast cell:** At the same reference pitch, the fixed 9.0 µm microcontrast cell MUST be at least one source pixel wide.
 - **Crispness:** At fixed seed, target, and geometry, the positive delivered field MUST report a positive lag-1 adjacent-sample correlation and a shorter correlation tail than the negative delivered base. The record MUST report lags 1 through 4 and the declared spectral or adjacent-sample statistic.
-- **Two failure modes:** A field that reads only as a low-frequency density cloud fails for the same reason as a field whose adjacent samples are uncorrelated pixel noise. The positive delivered base and its minority microcontrast component MUST sit between those modes, not at either endpoint.
-- **Base dominance:** The positive base cell MUST remain the dominant correlation length; the microcontrast component MUST NOT replace it.
+- **Two failure modes:** A field that reads only as a low-frequency density cloud fails for the same reason as a field whose adjacent samples are uncorrelated pixel noise. The positive coarse base and its fixed microcontrast component MUST sit between those modes, not at either endpoint.
+- **Scale separation:** At large `dye_size`, the positive coarse base MUST remain the dominant correlation length; the fixed microcontrast component MUST NOT replace it. At size `1` the 7.0 µm coarse cell and the 9.0 µm fixed component overlap by design because `dye_size` controls only the coarse scale.
 - **Visual:** At 100% and the intended viewing size, positive grain MUST remain visible without broad smears, soapy clumps, or uncorrelated single-pixel noise. The review MUST use the same non-Dye settings as the negative comparison.
 
 Numerical proof and photographic proof are separate. A local synthetic probe, one seed, one crop, one stock, a software adapter, or a visually similar output MUST NOT be presented as universal algorithm or stock acceptance.

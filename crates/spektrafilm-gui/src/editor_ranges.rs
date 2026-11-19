@@ -280,7 +280,7 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "film_render.grain.procedural_resolution_type" => Some((0.0, 1.0, 1.0, 0)),
         "film_render.grain.procedural_timer" => Some((0.0, 0.999999, 0.01, 6)),
         "film_render.grain.dye_strength" => Some((0.0, 4.0, 0.05, 2)),
-        "film_render.grain.dye_size" => Some((1.0, 4.0, 0.05, 2)),
+        "film_render.grain.dye_size" => Some((1.0, 16.0, 0.05, 2)),
         "film_render.grain.dye_color_grain" => Some((0.0, 1.0, 0.01, 2)),
         "film_render.grain.rms_granularity" => Some((0.0, 1000000.0, 1.0, 2)),
         // Engine-shared fields: the single range is the union of the former

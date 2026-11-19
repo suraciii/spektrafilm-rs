@@ -1668,7 +1668,7 @@
   "controls.scanner.experimental_setup": "experimental frame setup",
   "controls.scanner.experimental_setup_help": "Measure the whole developed frame for exposure, cast and contrast placement before the fixed tone. Off by default: the algorithm is a declared heuristic with no validated photographic model behind it, it makes the scan frame-dependent, and it cannot be baked into a point-wise LUT. Turning it off keeps the readout a fixed, frame-independent transform.",
   "controls.grain.dye_strength_help": "Relative Dye grain amplitude: 1 keeps the delivered look; 0 removes random grain, including residual count noise. The density response and the inter-record ratio stay unchanged, and this is not a certified optical RMS target.",
-  "controls.grain.dye_size_help": "Relative Dye grain size in film coordinates: 1 keeps the delivered correlation length; larger values scale the base, layer, and microcontrast cells together. At a fixed aperture, aperture-integrated granularity can change; this is not a tone shift, crystal diameter, scanner blur, or output-pixel size.",
+  "controls.grain.dye_size_help": "Relative Dye grain size in film coordinates: 1 keeps the delivered coarse correlation length; larger values scale the coarse base and each active layer's relative cell. The positive microcontrast cell stays fixed at 9 µm. At a fixed aperture, aperture-integrated granularity can change; this is not a tone shift, crystal diameter, scanner blur, or output-pixel size.",
   "controls.grain.dye_color_grain": "Inter-record grain separation",
   "controls.grain.dye_color_grain_help": "0 = shared field, 1 = independent records. Affects grain chroma: higher separation makes RGB grain more distinct and more chromatic.",
   "surfaces.workflow.mode": "Workflow",

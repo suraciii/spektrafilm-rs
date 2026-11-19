@@ -249,7 +249,7 @@ pub(crate) fn leaf_numeric_bounds(path: &str) -> Option<(f64, Option<f64>)> {
         | "film_render.grain.exposure.highlight_threshold" => Some((0.0, Some(1.0))),
         "film_render.grain.exposure.seed" => Some((0.0, Some(2_147_483_647.0))),
         "film_render.grain.dye_strength" => Some((0.0, Some(4.0))),
-        "film_render.grain.dye_size" => Some((1.0, Some(4.0))),
+        "film_render.grain.dye_size" => Some((1.0, Some(16.0))),
         "film_render.grain.dye_color_grain" => Some((0.0, Some(1.0))),
         // Discovery range only; `validate` and the sparse-source leaf check
         // own the strict positivity.
