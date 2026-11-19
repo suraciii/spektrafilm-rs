@@ -46,11 +46,13 @@ A multiple-exposure stack is the ordered set of two to eight exposures.
 - Each exposure MUST pass source interpretation, metering, camera conversion, and the camera-side film exposure operations.
 - The camera-side operations include camera diffusion, lens blur, camera light leak, and Film Halation.
 - Every exposure MUST share the selected film, print reference, route, source interpretation, working geometry, and working pitch.
+- Camera RAW, lens correction, channel swap, route, scan profile, scan output, and direct scan MUST apply to the whole stack.
+- A per-exposure RAW or scan option is outside this capability.
 - The offset MUST apply after metering and before the camera-side optical operations.
 - Composition MUST add record exposure before the density curve. It MUST NOT add density.
 - The density curve, DIR couplers, and material grain MUST run once after the last exposure.
 - The selected downstream print and scan operations MUST run once after composition.
-- The stack MUST accept only a film-forming image-entry route.
+- The stack MUST accept film-forming image entries, including camera RAW.
 - A completed material state MUST NOT be a stack input or output.
 - A nonzero global camera exposure compensation MUST fail. The per-exposure offsets own the exposure decision.
 
@@ -88,7 +90,7 @@ Film Multiple Exposure MUST follow the [Film chain](../film-chain/spec.md) stage
 | Output crop | Optional output rectangle. |
 | Seed | One deterministic seed for the stack. |
 | Memory bound | Optional host-memory bound. |
-| Film group | Film selection, print reference, and metering. |
+| Film group | Film selection, print reference, metering, route, scan, RAW, and channel-swap values. |
 | RGB group | LUT declaration, LUT Grade, and Effects values. |
 | Weights | Not admitted; offsets express relative exposure. |
 | Per-exposure transform | Not admitted. |

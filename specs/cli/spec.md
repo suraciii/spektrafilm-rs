@@ -74,12 +74,11 @@ The stack MUST select exactly one method: Film or RGB.
 
 | Method | Selector | Excluded |
 | --- | --- | --- |
-| Film | `--film`; `--paper` optional | `--lut`, camera RAW, lens correction, channel swap, scan profile |
-| RGB | `--lut CUBE` | `--film`, `--paper`, camera RAW, lens correction, channel swap, scan profile, Off mode |
+| Film | `--film`; `--paper` optional | `--lut` |
+| RGB | `--lut CUBE` | `--film`, `--paper`, camera RAW, lens correction, channel swap, route, scan profile, scan output, direct scan, Off mode |
 
-- A Film stack MUST use the default `input > film > print > scan` route.
-- An RGB stack MUST use LUT mode.
-- Route, scan-film, and scan-output selection are outside this command.
+- A Film stack MUST use one resolved route and one set of RAW, lens, channel-swap, scan-profile, scan-output, and direct-scan options for the whole stack.
+- An RGB stack MUST use LUT mode and MUST NOT accept the Film options in the method table.
 - A stack MUST contain two to eight exposures.
 - A stack MUST NOT combine with a positional input or a stage artifact input.
 - A stack MUST NOT combine `--expose` with `--recipe`.
@@ -97,7 +96,7 @@ The stack MUST select exactly one method: Film or RGB.
 | Schema | `spektrafilm.multiple-exposure/2`; version 1 loads as Film. |
 | Method group | One method; only that method's group. |
 | Shared fields | Source interpretation, seed, output crop, and per-exposure offsets. |
-| Film fields | Film selection, print reference, and metering policy. |
+| Film fields | Film selection, print reference, metering, route, scan, RAW, and channel-swap values. |
 | RGB fields | LUT declaration, LUT Grade, and Effects values. |
 
 A failed memory check MUST publish no output.

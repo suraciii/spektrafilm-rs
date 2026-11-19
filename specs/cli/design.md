@@ -78,6 +78,7 @@ RenderRecipe MUST remain the structured render contract. The resolution report M
 
 The version 2 recipe carries the shared fields and one method group.
 Film reuses the version 1 film, paper, metering, and print fields.
+It adds stack-wide RAW, lens, channel-swap, route, and scan fields.
 
 RGB carries the resolved LUT look, including LUT, LUT Grade, and Effects.
 Version 1 loads as Film without field rewriting.
