@@ -151,6 +151,8 @@ Scanner lens blur MUST model readout optics on linear transmitted or reflected l
 
 Unsharp mask is digital scan sharpening, not lens resolution. It remains downstream of interpretation and output gamut processing. Procedural and Exposure Grain retain their separate [post-scan boundaries](../film-grain/spec.md#contract); they MUST NOT be moved into optical acquisition to make the grain engines appear equivalent.
 
+Print viewing glare, scanner lens blur, and unsharp mask are single-track under [Simulation methods](../simulation-method/spec.md#declared-tracks).
+
 ## Film Halation source response
 
 Film Halation operates on the Film Input under [Halation models](../halation/spec.md).
@@ -183,6 +185,13 @@ This control remains separate from `halation_strength`, `halation_amount`, `boos
 - The leak field MUST NOT depend on how the device chunks the frame across dispatches.
 - The leak MUST belong to the film stage. A frozen film record MUST NOT gain a second leak when a continuation runs the remaining stages.
 - Both execution routes MUST evaluate the same leak field for the same geometry, pitch, seed, and parameters.
+
+Camera light leak is single-track under [Simulation methods](../simulation-method/spec.md#declared-tracks).
+
+## Multiple exposure
+
+Multiple exposure is a capture capability under [Multiple exposure](../multiple-exposure/spec.md).
+The film chain supplies record exposure and the camera-side operations listed there.
 
 ## Optical-order cutover
 

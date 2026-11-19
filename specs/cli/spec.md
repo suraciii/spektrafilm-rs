@@ -14,7 +14,7 @@ A parameter override is not a preset, GUI state, or render recipe. The parameter
 
 LUT mode MUST follow [Render modes](../render-mode/spec.md), the [LUT workflow](../lut-workflow/spec.md), and the [LUT transform](../lut-transform/spec.md#ui-and-cli). Its canonical runtime leaves MUST be addressable through `--set` and `describe`. A LUT preset is a preset kind, but it is not a Film preset.
 
-Off mode MUST follow [Render modes](../render-mode/spec.md). Its active groups are `effects` and `io`; the film chain, `lut`, `grade`, `output_mix`, and `cmyk` remain stored and inactive. Off mode MUST NOT require a LUT declaration.
+The RGB Effects workflow MUST follow [Render modes](../render-mode/spec.md). Its active groups are `effects` and `io`; the film chain, `lut`, `grade`, `output_mix`, and `cmyk` remain stored and inactive. The RGB Effects workflow MUST NOT require a LUT declaration.
 
 Editing `effects` or `grade` MUST NOT select a render mode. A parameter-only invocation MUST set `workflow.mode` or use a preset.
 
@@ -38,10 +38,13 @@ The command MUST accept these forms:
 spektrafilm process INPUT --output OUTPUT --film STOCK [--paper STOCK] [--params FILE] [OPTIONS]
 spektrafilm process INPUT --output OUTPUT --preset SELECTOR [OPTIONS]
 spektrafilm process ARTIFACT --route ROUTE --output OUTPUT [OPTIONS]
+spektrafilm process --expose PATH --expose PATH --output OUTPUT --film STOCK [OPTIONS]
+spektrafilm process --expose PATH --expose PATH --output OUTPUT --rgb [--lut CUBE] [OPTIONS]
 
 OPTIONS may include:
   --preset SELECTOR     repeatable; presets apply in appearance order
   --lut CUBE            use one .cube as the LUT transform; conflicts with film, preset, route, and feature-profile selectors
+  --rgb                 select the RGB workflow for a multiple-exposure stack; --lut enables the LUT module
   --set SOURCE          repeatable file or comma-separated assignments
   --dry-run             resolve and validate; print effective parameters without rendering; --output may be omitted
   --dry-run-format json|text  dry-run presentation; default: json
@@ -53,6 +56,55 @@ OPTIONS may include:
 ```
 
 Existing backend, route, RAW, output, and data-directory options MUST remain available.
+
+### Multiple exposure
+
+A multiple-exposure render MUST select a multiple-exposure stack instead of one positional input.
+The stack MUST select exactly one method: Film or RGB.
+
+| Option | Requirement |
+| --- | --- |
+| `--expose PATH` | Adds one exposure; repeat for the stack. |
+| `--expose-ev EV` | Supplies one finite offset per exposure; one value per `--expose`. |
+| `--multiple-exposure-meter` | Film only; accepts `each`, `lock-to-first`, or `manual`; defaults to `manual`. |
+| `--output-crop X,Y,W,H` | Crops the rendered output; it MUST NOT crop an input. |
+| `--recipe FILE` | Loads one resolved stack recipe. |
+| `--recipe-out FILE` | Writes the resolved stack recipe. |
+| `--preview` | Renders the same composite at a reduced long edge. |
+| `--preview-max-size` | Sets the preview long edge. |
+| `--max-memory` | Bounds host memory before the first exposure. |
+
+| Method | Selector | Excluded |
+| --- | --- | --- |
+| Film | `--film`; `--paper` optional | `--rgb` |
+| RGB | `--rgb`; `--lut CUBE` optional | `--film`, `--paper`, camera RAW, lens correction, channel swap, route, scan profile, scan output, direct scan |
+
+- A Film stack MUST use one resolved route and one set of RAW, lens, channel-swap, scan-profile, scan-output, and direct-scan options for the whole stack.
+- An RGB stack MUST use the RGB workflow and MUST NOT accept the Film options in the method table.
+- A stack with `--lut` and no `--rgb` MUST use the RGB workflow with the LUT module active.
+- `--rgb` MUST conflict with `--film` and `--paper`.
+- A stack MUST contain two to eight exposures.
+- A stack MUST NOT combine with a positional input or a stage artifact input.
+- A stack MUST NOT combine `--expose` with `--recipe`.
+- Every exposure MUST share the final working geometry.
+- A stack MUST NOT accept a per-exposure transform.
+- A stack MUST NOT combine with a preset, `--params`, or `--feature-profile`.
+- An RGB stack MAY use `--set` for `effects.*` and `grade.*`; a Film stack MUST NOT use `--set`.
+- A multiple-exposure `--dry-run` MUST validate the stack and print the effective plan without rendering.
+- A multiple-exposure `--diagnostics` report MUST cover every exposure and the composition.
+- `--timings` MUST report the same work when set.
+- `--raw-out` is outside this command.
+- A stack MUST run one iteration.
+
+| Recipe rule | Requirement |
+| --- | --- |
+| Schema | `spektrafilm.multiple-exposure/2`; version 1 loads as Film. |
+| Method group | One method; only that method's group. |
+| Shared fields | Source interpretation, seed, output crop, and per-exposure offsets. |
+| Film fields | Film selection, print reference, metering, route, scan, RAW, and channel-swap values. |
+| RGB fields | Active LUT, LUT Grade, and Effects values. |
+
+A failed memory check MUST publish no output.
 
 ### Preset selector
 
@@ -84,11 +136,11 @@ Preset print references retain the paper-only restriction in the preset specific
 
 `--preset` MAY be repeated; presets apply in appearance order, and supplied profile references and parameter controls count as explicit. For image input with a film preset, both profile references MUST come from that preset. `--scan-film` MUST request `input > film > scan` without replacing the preset's print reference.
 
-A LUT preset MUST select LUT mode and MUST NOT require film or print profile selectors. An Effects preset MUST select Off mode and MUST require neither film, print, nor LUT selectors.
+A LUT preset MUST select LUT mode and MUST NOT require film or print profile selectors. An Effects preset MUST select the RGB Effects workflow and MUST require neither film, print, nor LUT selectors.
 
 A LUT or Effects preset MUST NOT be combined with a Film preset, a section preset, a complete preset of a different mode, `--film`, `--paper`, `--route`, `--scan-film`, or `--feature-profile` in one invocation.
 
-The command MUST fail rather than choose a mode silently or apply presets in a cross-mode sequence. A section preset MUST NOT be applied while the final mode is LUT or Off; the command MUST require an explicit Film-mode selection first.
+The command MUST fail rather than choose a mode silently or apply presets in a cross-mode sequence. A section preset MUST NOT be applied while the final workflow is LUT or RGB Effects; the command MUST require an explicit Film-mode selection first.
 
 `lut build` MUST retain its existing export contract. It MUST NOT import its result, apply it, create a LUT preset, or switch mode. The simple GUI export/import workflow remains governed by [LUT workflow](../lut-workflow/spec.md).
 
@@ -339,7 +391,7 @@ For an invocation with added parameter sources, resolution MUST use this order:
 4. Apply every selected preset in appearance order through the shared preset resolver:
    - A Film preset replaces the complete Film payload.
    - A LUT preset replaces the LUT transform, Effects, and LUT Grade and selects LUT mode.
-   - An Effects preset replaces Effects and selects Off mode.
+   - An Effects preset replaces Effects and selects the RGB Effects workflow.
    - A section preset edits only its section controls and counts as explicit from this step on.
 5. Retain excluded runtime context and derive the profile film route default when the preset set supplies a film reference.
 6. Apply every `--set` source in appearance order. A file source and an inline assignment source have identical leaf-merge semantics.
@@ -482,9 +534,9 @@ Terminal detection MUST NOT change the format. JSON MUST contain one object on s
 
 `workflow` MUST contain `mode`, `route`, and `film_stages`. `mode` MUST be `film`, `lut`, or `off`; `film_stages` MUST be `active` only in Film mode.
 
-In LUT and Off modes, `route`, `film_profile`, `print_profile`, capture illuminant, and readout illuminant MUST be null. Film-grain reports MUST report inactive.
+In LUT and RGB Effects workflows, `route`, `film_profile`, `print_profile`, capture illuminant, and readout illuminant MUST be null. Film-grain reports MUST report inactive.
 
-In Off mode, the LUT declaration and LUT Grade MUST report inactive.
+In the RGB Effects workflow, the LUT declaration MUST report inactive; LUT Grade MUST report its independent active state.
 
 `output` MUST retain `path`, `format`, `bit_depth`, `color_space`, `cctf_encoding`, `compression`, `jpeg_quality`, and `jpeg_subsampling`; inapplicable options MUST be `null`. `backend` MUST report the requested `cpu` or `gpu` policy, or `auto` when selection remains deferred. Diagnostics MUST go to stderr.
 
@@ -524,7 +576,7 @@ In Film mode it MUST show profile identities, route, scan-output mode, effective
 
 In LUT mode it MUST show the cube path, title when present, input and output spaces, per-axis domain, domain policy, shaper, strength, Effects, and LUT Grade, and MUST NOT print film grain or spectral stage controls as active.
 
-In Off mode it MUST show the active Effects and output color management, and MUST NOT print film, LUT, or LUT Grade controls as active.
+In the RGB Effects workflow it MUST show the active Effects, the independent LUT Grade state, and output color management, and MUST NOT print film or LUT controls as active.
 
 Text layout MUST NOT be a machine contract.
 
@@ -532,13 +584,13 @@ In Film mode, both dry-run formats MUST report the capture illuminant separately
 
 The report MUST carry the selected film profile's `reference_illuminant`, the requested `camera.capture_illuminant` value, the effective value in force for the render, and the source that supplied it, where source is one of `unset`, `set`, or `preset`.
 
-In LUT and Off modes, `capture_illuminant` MUST be null.
+In LUT and RGB Effects workflows, `capture_illuminant` MUST be null.
 
 An unset requested value MUST report the inherited profile reference as the effective value with source `unset`. An explicit value on a route that computes no film exposure from scene RGB MUST be reported inactive with its reason, and its effective value MUST be the profile reference illuminant.
 
 The report MUST NOT present RAW white balance, the readout illuminant, `enlarger.illuminant`, or the output white point as the capture illuminant.
 
-In Film mode, both dry-run formats MUST report the resolved readout illuminant separately from the capture and enlarger illuminants, together with the material-category rule that selected it. In LUT and Off modes, `readout_illuminant` MUST be null.
+In Film mode, both dry-run formats MUST report the resolved readout illuminant separately from the capture and enlarger illuminants, together with the material-category rule that selected it. In LUT and RGB Effects workflows, `readout_illuminant` MUST be null.
 
 Both formats MUST state that pixel decoding, compute-device availability, metered exposure, and final pixel geometry remain unchecked. JSON MUST add `unchecked` with the stable values `pixel_decode`, `compute_device`, `metered_exposure`, and `output_geometry`. Dry run MUST NOT claim these outcomes.
 

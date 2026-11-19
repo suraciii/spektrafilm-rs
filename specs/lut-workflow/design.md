@@ -192,7 +192,7 @@ The CLI reuses the same preset resolver and LUT file references.
 - It uses display-encoded sRGB input and output and clamp by default; `--set` MAY override those declarations, Effects, and LUT Grade.
 - `--lut` conflicts with preset selection and with the film and spectral route selectors so one invocation cannot mix modes.
 - Dry-run reports the resolved mode. In LUT mode, film-stage and film-grain reports are inactive or omitted from text.
-- In Off mode, film, LUT, and LUT Grade reports are inactive; Effects are reported.
+- In Off mode, film and LUT reports are inactive; Effects and the independent LUT Grade state are reported.
 - `--set workflow.mode=lut` and the `lut`, `effects`, and `grade` leaves remain available for parameter-only invocations. `lut_look` is rejected.
 
 ## Validation and failure

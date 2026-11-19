@@ -6,7 +6,7 @@ This specification defines the implementation target for the compact, current-ph
 
 A **preset** is a named, reusable set of photographic controls.
 
-A **film preset** selects film and print profiles and their visual simulation controls. A **LUT preset** selects a LUT transform and its external LUT file reference. An **Effects preset** selects Off mode and its Effects values.
+A **film preset** selects film and print profiles and their visual simulation controls. A **LUT preset** selects a LUT transform and its external LUT file reference. An **Effects preset** selects the RGB Effects workflow and its Effects values.
 
 A **section preset** carries exactly one film-preset section. Reusable combinations of controls that are already preset-owned belong in the existing film, LUT, Effects, or section preset. A preset is not a complete GUI state, an input image, a viewer state, an export configuration, a LUT pixel payload, a calibration profile, or an arbitrary film route.
 
@@ -19,6 +19,8 @@ A **section preset** carries exactly one film-preset section. Reusable combinati
 
 [Simulation methods](../simulation-method/spec.md) owns the method mapping.
 
+The RGB Effects workflow uses the canonical mode value `off`; visible surfaces present Effects, not Off.
+
 A preset is either **built-in** or **user-owned**.
 
 A preset document is a **film preset**, a **LUT preset**, an **Effects preset**, or a **section preset**. A film preset carries both profile references and every required preset-owned group. Its optional camera group follows the [file format rules](#file-formats).
@@ -27,13 +29,27 @@ A LUT preset carries an external LUT file path and hash, the LUT declaration, Ef
 
 It is a complete preset and is governed by the [LUT workflow](../lut-workflow/spec.md#lut-presets).
 
-An Effects preset carries Effects and no LUT declaration, LUT Grade, or film or print profile reference. It is a complete preset for Off mode.
+An Effects preset carries Effects and no LUT declaration, LUT Grade, or film or print profile reference. It is a complete preset for the RGB Effects workflow.
 
 A section preset carries exactly one section of the film preset and no profile reference. A section is a named set of preset-owned parameter paths, defined by the [preset design](design.md).
 
 The kind is derived from the carried shape, never declared by a field. A document that carries neither a complete Film preset, a LUT transform, an Effects payload, nor exactly one film-preset section MUST be rejected. LUT and Effects section presets are outside this contract.
 
 A Film preset or section preset MUST NOT carry `lut`, `effects`, or `grade`. A LUT or Effects preset MUST NOT carry `finishing`, `output_mix`, `cmyk`, or a material or scanner group.
+
+### Look pairs
+
+A look pair declares one Film preset and one RGB preset as two renderings of the same look.
+It is a library relationship, not a preset kind or a serialized document.
+
+Look pairs are built-in only; a user-owned preset MUST NOT declare a pair.
+The RGB side MAY be a built-in Effects preset; no other built-in Effects preset is admitted.
+
+A paired RGB preset MUST carry RGB Halation values calibrated to its Film preset.
+A preset without a pair MUST NOT claim cross-method halation equivalence.
+
+A built-in look pair MUST share one stable pair identity across both presets.
+The method switch MAY load the paired preset; it MUST NOT silently change the Film profile or the LUT declaration.
 
 The derived kind is an internal dispatch fact. It selects the document schema, resolver, render mode, and thumbnail preparation for a preset. It MUST NOT become a separate browser category, library, or mode-type filter.
 
@@ -95,19 +111,19 @@ Preset export and import move only the preset document; the LUT file is external
 
 ### Effects presets
 
-An Effects preset is a complete preset for Off mode. It carries the `effects` root and its Diffusion, RGB Halation, and Grain groups. It carries no LUT declaration, LUT Grade, or film or print profile reference.
+An Effects preset is a complete preset for the RGB Effects workflow. It carries the `effects` root and its Diffusion, RGB Halation, and Grain groups. It carries no LUT declaration, LUT Grade, or film or print profile reference.
 
 An Effects preset uses preset schema version 9. A version 9 document without an `effects` group or with a `lut`, `grade`, film, or print reference MUST be rejected.
 
-Effects presets are user-owned. Built-in Effects presets are outside this contract.
+Effects presets are user-owned, except for a built-in RGB preset that participates in a declared [look pair](#look-pairs).
 
 Missing effect groups mean all effects off. A saved Effects preset MUST carry every effect group's effective values.
 
-Applying an Effects preset MUST switch to Off mode, replace the Effects groups, preserve stored film, LUT, LUT Grade, scanner, and route values, and create one undoable transaction. It MUST NOT read a LUT file or prepare spectral materials.
+Applying an Effects preset MUST switch to the RGB Effects workflow, replace the Effects groups, preserve stored film, LUT, LUT Grade, scanner, and route values, and create one undoable transaction. It MUST NOT read a LUT file or prepare spectral materials.
 
-In Off mode, **Save preset…** captures an Effects preset. It MUST NOT require a LUT and MUST NOT capture film or print profiles, LUT Grade, inactive spectral controls, image data, or a render result.
+In the RGB Effects workflow, **Save preset…** captures an Effects preset. It MUST NOT require a LUT and MUST NOT capture film or print profiles, LUT Grade, inactive spectral controls, image data, or a render result.
 
-The browser presents Effects presets in the same list and groups. Search MUST match their name and active effect names. An Effects thumbnail MUST use Off mode and MUST NOT prepare spectral materials or load a LUT.
+The browser presents Effects presets in the same list and groups. Search MUST match their name and active effect names. An Effects thumbnail MUST use the RGB Effects workflow and MUST NOT prepare spectral materials or load a LUT.
 
 ### Browser interaction
 
@@ -145,13 +161,13 @@ The query MUST NOT persist across restarts or enter GUI-state files or preset do
 
 ### Current-photograph thumbnails
 
-Every valid built-in and user preset MUST use the same [preset thumbnail](../../CONTEXT.md#language) rules. A LUT preset thumbnail MUST use LUT mode; a Film preset thumbnail MUST use Film mode; an Effects preset thumbnail MUST use Off mode. No kind MAY load another kind's inactive materials or LUT file.
+Every valid built-in and user preset MUST use the same [preset thumbnail](../../CONTEXT.md#language) rules. A LUT preset thumbnail MUST use LUT mode; a Film preset thumbnail MUST use Film mode; an Effects preset thumbnail MUST use the RGB Effects workflow. No kind MAY load another kind's inactive materials or LUT file.
 
 Thumbnails MUST depict the accepted current photograph with its input interpretation, orientation, and crop, without an additional composition-changing crop.
 
 Each candidate MUST resolve against the same accepted photographic context through the production complete preset resolver. A Film preset candidate MUST retain that resolver's replace/preserve scope, material preparation, film route defaulting, and scanner normalization under [Apply](#apply).
 
-A LUT preset candidate MUST use LUT mode and MUST NOT prepare film or print materials. An Effects preset candidate MUST use Off mode and MUST NOT prepare film, print, or LUT data.
+A LUT preset candidate MUST use LUT mode and MUST NOT prepare film or print materials. An Effects preset candidate MUST use the RGB Effects workflow and MUST NOT prepare film, print, or LUT data.
 
 No candidate MAY prepare a mode other than its own.
 
@@ -230,13 +246,13 @@ Multi-photograph application follows [Photograph work](../gui-product-design/pho
 
 - Selecting a preset validates the document, or the section it carries, before changing active controls. Its carried runtime values MUST follow [shared value validity](../cli/spec.md#parameter-value-validity) after the preset's existing versioned migration, without filling omitted section leaves.
 - A LUT preset validates its LUT file path, hash, and declaration, then applies under [LUT presets](#lut-presets). It switches to LUT mode, replaces the LUT transform, Effects, and LUT Grade, and preserves stored film, print, scanner, and route values.
-- An Effects preset validates its Effects groups, switches to Off mode, and preserves stored film, LUT, LUT Grade, scanner, and route values.
+- An Effects preset validates its Effects groups, switches to the RGB Effects workflow, and preserves stored film, LUT, LUT Grade, scanner, and route values.
 - A LUT preset does not use a film route default.
 - The film-specific profile, scanner-normalization, and material-default rules below apply to film presets and section presets, not to LUT or Effects presets.
 - A film preset identifies both film and print profiles. The resolver validates film=`support=film, stage=filming` and print=`support=paper, stage=printing`.
 - A film preset or section preset does not store or directly apply a film route. A film preset selects the corresponding film route default: negative film selects `input > film > print > scan`, and positive film selects `input > film > scan`.
 - The user MAY then choose another supported film route manually. A section preset carries no film reference and MUST NOT change the film route.
-- A section preset MUST NOT be applied while LUT or Off mode is active; the command or GUI MUST require an explicit switch to Film mode first.
+- A section preset MUST NOT be applied while LUT or the RGB Effects workflow is active; the command or GUI MUST require an explicit switch to Film mode first.
 - Applying a film preset replaces all carried preset-owned controls together, including the controls of every carried section, so a section preset MUST be applied after a preset change to take effect. An omitted camera group preserves the active virtual film exposure and metering controls.
 - A film preset owns and replaces [Tone & Color](../finishing/spec.md#persistence-and-replay), independently of its optional camera group. A LUT preset owns the corresponding LUT Grade group.
 - Sparse omission MUST NOT edit finishing values.
@@ -477,7 +493,7 @@ candidate only for an accepted application. Thumbnail candidates remain isolated
 
 Applying a preset validates and resolves first, commits its carried controls together, preserves excluded context, increments a parameter revision, invalidates affected main-render caches, and marks the render dirty. A LUT preset application also commits LUT mode and preserves stored film, print, scanner, and route selections.
 
-An Effects preset application commits Off mode and preserves stored film, LUT, LUT Grade, scanner, and route selections.
+An Effects preset application commits the RGB Effects workflow and preserves stored film, LUT, LUT Grade, scanner, and route selections.
 
 A Film preset application also commits Film mode, film and print selections, and the profile-derived film route default under [Apply](#apply). A section application MUST preserve profile selections and the film route.
 
@@ -515,5 +531,5 @@ Acceptance MUST use the production native entry point and real renderer. An HTML
 | Save or Export after thumbnail completion and source replacement | Delivery consumes the proper retained or independent-render input, never a candidate thumbnail or its display raster. |
 | Export a LUT file, import it, and save it as a LUT preset | The preset appears in `My Presets`, switches to LUT mode when applied, loads no film or print profiles, and creates one Undo transaction. |
 | Apply a LUT preset with a missing or changed LUT file | Validation fails before output; the active mode, controls, applied identity, and retained image remain unchanged; no Film preset or other LUT is substituted. |
-| Save and apply an Effects preset in Off mode | The preset appears in `My Presets`, switches Off mode when applied, preserves stored film, LUT, LUT Grade, scanner, and route values, reads no LUT file, and creates one Undo transaction. |
-| Mix Film, LUT, and Effects thumbnails in one browser | Film candidates prepare Film mode; LUT candidates use LUT mode; Effects candidates use Off mode; no candidate loads another kind's inactive materials or LUT. |
+| Save and apply an Effects preset in the RGB Effects workflow | The preset appears in `My Presets`, switches to the RGB Effects workflow when applied, preserves stored film, LUT, LUT Grade, scanner, and route values, reads no LUT file, and creates one Undo transaction. |
+| Mix Film, LUT, and Effects thumbnails in one browser | Film candidates prepare Film mode; LUT candidates use LUT mode; Effects candidates use the RGB Effects workflow; no candidate loads another kind's inactive materials or LUT. |

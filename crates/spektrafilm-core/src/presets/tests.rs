@@ -39,7 +39,10 @@ fn kodak_portra_400_spektra_matches_experimental_stock() {
 /// Dye grain uses zero RMS as a reference-scale fallback, so `active` is authoritative.
 #[test]
 fn builtin_presets_enable_material_grain_and_halation() {
-    for preset in builtin_presets() {
+    for preset in builtin_presets()
+        .into_iter()
+        .filter(|preset| preset.kind() == Ok(PresetKind::Look))
+    {
         let resolved = preset
             .resolve(&data(), &RuntimeParams::default())
             .unwrap_or_else(|error| panic!("{}: {error}", preset.name));
@@ -739,7 +742,10 @@ fn parity_only_film_glare_is_rejected_as_unowned() {
     assert!(error.contains("film_render.glare"), "{error}");
     // Built-in documents no longer carry the never-read group, so a captured
     // grain/print section cannot acquire it and the section table stays clean.
-    for preset in builtin_presets() {
+    for preset in builtin_presets()
+        .into_iter()
+        .filter(|preset| preset.kind() == Ok(PresetKind::Look))
+    {
         let value = serde_json::to_value(preset.look_parameters().unwrap()).unwrap();
         assert!(
             value["film_render"].get("glare").is_none(),
@@ -1363,7 +1369,10 @@ fn migrated_legacy_ink_style_migration_is_idempotent_at_the_preset_boundary() {
 
 #[test]
 fn builtin_schema_five_looks_decode_canonical_cmyk_fields_only() {
-    for preset in builtin_presets() {
+    for preset in builtin_presets()
+        .into_iter()
+        .filter(|preset| preset.kind() == Ok(PresetKind::Look))
+    {
         assert_eq!(preset.schema_version, PRESET_SCHEMA_VERSION);
         let exported = serde_json::to_value(&preset).unwrap();
         let parameters = exported["parameters"].as_object().unwrap();

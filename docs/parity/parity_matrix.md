@@ -51,6 +51,10 @@ The recorded Python 0.3.4 differential rows are historical evidence. They do not
   `print_render.glare` there; on `scan_film` it passes `glare=None`
   (the historical Rust scan-glare divergence is retained under audit_baseline)
 
+## Product-only models
+
+RGB Halation and RGB Multiple Exposure are product models, not Python 0.3.4 parity rows. CPU/GPU RGB Halation parity is exercised by `lut_look::tests::device_lut_effects_match_the_reference_highlight_layer` and `lut_look::tests::device_rgb_halation_all_zero_sigma_is_an_exact_bypass`. Film/RGB visual equivalence remains a declared built-in look-pair target, not a universal parity claim.
+
 ## Scenario catalog
 
 68 expanded rows in `scripts/parity/scenarios.py` cover the preserved bare

@@ -56,7 +56,7 @@ struct ChannelScaleParams {
     scale: [f32; 4],
 }
 
-fn per_channel_job(
+pub(super) fn per_channel_job(
     backend: &WgpuBackend,
     n_pixels: u32,
     src: &dyn RasterStorage,
@@ -93,12 +93,20 @@ fn per_channel_job(
     )
 }
 
+fn halation_active(hp: &spektrafilm_backend::HalationGpuParams) -> bool {
+    hp.halation_n_bounces >= 1
+        && hp.halation_a_tot.iter().any(|&value| value > 0.0)
+        && hp.halation_first_sigma_px.iter().any(|&value| value > 0.0)
+}
+
+fn scatter_active(hp: &spektrafilm_backend::HalationGpuParams) -> bool {
+    hp.scatter_amount > 0.0
+        && (0..3).any(|c| hp.scatter_core_px[c] > 0.0 || hp.scatter_tail_px[c] > 0.0)
+}
+
 /// Whether scatter or an effective bounce actually constructs a Gaussian job.
 pub(super) fn uses_gaussian(hp: &spektrafilm_backend::HalationGpuParams) -> bool {
-    hp.scatter_amount > 0.0
-        || (hp.halation_n_bounces >= 1
-            && hp.halation_a_tot.iter().any(|&value| value > 0.0)
-            && (0..3).any(|c| hp.halation_a_tot[c] != 0.0 && hp.halation_first_sigma_px[c] > 0.0))
+    scatter_active(hp) || halation_active(hp)
 }
 
 pub(super) fn build_halation_state(
@@ -124,26 +132,14 @@ pub(super) fn build_halation_state(
     let buf_d = paged_transport(backend, img_bytes, "halation_d")?;
 
     // ── Scatter ────────────────────────────────────────────────────────
-    // The reference skips a channel only when its core and tail widths are
-    // both non-positive; such a channel keeps its input unchanged, which the
-    // zero blend weight reproduces exactly.
-    let scatter = if hp.scatter_amount > 0.0 {
-        let active: [bool; 3] =
-            std::array::from_fn(|c| hp.scatter_core_px[c] > 0.0 || hp.scatter_tail_px[c] > 0.0);
-        let core_sigma: [f64; 3] = std::array::from_fn(|c| {
-            if hp.scatter_core_px[c] > 0.0 {
-                f64::from(hp.scatter_core_px[c])
-            } else {
-                0.0
-            }
-        });
-        let tail_lambda: [f64; 3] = std::array::from_fn(|c| {
-            if hp.scatter_tail_px[c] > 0.0 {
-                f64::from(hp.scatter_tail_px[c])
-            } else {
-                0.0
-            }
-        });
+    // The reference activates scatter when at least one channel width is
+    // positive, then runs every channel with a near-delta floor. A channel
+    // with both widths zero therefore keeps its input unchanged.
+    let scatter = if scatter_active(hp) {
+        let core_sigma: [f64; 3] =
+            std::array::from_fn(|c| f64::from(hp.scatter_core_px[c]).max(1e-6));
+        let tail_lambda: [f64; 3] =
+            std::array::from_fn(|c| f64::from(hp.scatter_tail_px[c]).max(1e-6));
         let core = build_grain_blur_paged_with_scratch(
             backend,
             width,
@@ -162,13 +158,7 @@ pub(super) fn build_halation_state(
             n_pixels as u32,
             &buf_c,
             &buf_d,
-            std::array::from_fn(|c| {
-                if active[c] {
-                    1.0 - hp.scatter_tail_weight[c]
-                } else {
-                    0.0
-                }
-            }),
+            std::array::from_fn(|c| 1.0 - hp.scatter_tail_weight[c]),
             true,
             "halation_scatter_init",
         )?;
@@ -192,13 +182,7 @@ pub(super) fn build_halation_state(
                 n_pixels as u32,
                 &buf_c,
                 &buf_d,
-                std::array::from_fn(|c| {
-                    if active[c] {
-                        amp as f32 * hp.scatter_tail_weight[c]
-                    } else {
-                        0.0
-                    }
-                }),
+                std::array::from_fn(|c| amp as f32 * hp.scatter_tail_weight[c]),
                 false,
                 "halation_scatter_tail_acc",
             )?;
@@ -224,13 +208,8 @@ pub(super) fn build_halation_state(
                 _pad1: 0,
                 _pad2: 0,
                 amount: std::array::from_fn(|c| {
-                    // The shader binds `vec4<f32>`, so this is four wide; only
-                    // the first three channels have an entry in `active`.
-                    if c < 3 && active[c] {
-                        hp.scatter_amount
-                    } else {
-                        0.0
-                    }
+                    // The shader binds `vec4<f32>`, so this is four wide.
+                    if c < 3 { hp.scatter_amount } else { 0.0 }
                 }),
             },
             &[
@@ -252,9 +231,7 @@ pub(super) fn build_halation_state(
 
     // ── Optional compressed halation source ───────────────────────────
     // Computed once from the post-scatter image and shared by every bounce.
-    let halation_source_active = hp.source_compression > 0.0
-        && hp.halation_n_bounces > 0
-        && hp.halation_a_tot.iter().any(|&value| value > 0.0);
+    let halation_source_active = hp.source_compression > 0.0 && halation_active(hp);
     let buf_e = halation_source_active
         .then(|| paged_transport(backend, img_bytes, "halation_e"))
         .transpose()?;
@@ -294,20 +271,12 @@ pub(super) fn build_halation_state(
     let halation_src = buf_e.as_ref().unwrap_or(buf_b);
 
     // ── Multi-bounce halation ─────────────────────────────────────────
-    // The reference runs the block when at least one channel amplitude is
-    // positive, then adds `a_tot[c]·hb` per channel and renormalizes by
-    // `1 + a_tot[c]`. A channel whose first sigma is non-positive is skipped
-    // for the add but still participates in renormalization; both effects
-    // are reproduced here.
-    let halation_runs =
-        hp.halation_n_bounces >= 1 && hp.halation_a_tot.iter().any(|&value| value > 0.0);
-    let a_eff: [f32; 3] = std::array::from_fn(|c| {
-        if hp.halation_first_sigma_px[c] > 0.0 {
-            hp.halation_a_tot[c]
-        } else {
-            0.0
-        }
-    });
+    // The reference runs the block only when at least one amplitude and at
+    // least one first sigma are positive. Every channel then adds
+    // `a_tot[c]·hb` and renormalizes by `1 + a_tot[c]`; a zero first sigma
+    // uses the near-delta blur and remains in renormalization.
+    let halation_runs = halation_active(hp);
+    let a_eff = hp.halation_a_tot;
     let halation = if halation_runs {
         let n = hp.halation_n_bounces as usize;
         // Decay weights in f64, normalized the way the reference does.
@@ -415,6 +384,99 @@ pub(super) fn build_halation_state(
         halation_source,
         halation,
     })
+}
+
+pub(super) struct RgbHalationState {
+    _intermediate: Vec<ImagePage>,
+    _output: Vec<ImagePage>,
+    blurs: Vec<BlurJob>,
+    accumulate: Vec<PointwiseJob>,
+}
+
+impl RgbHalationState {
+    pub(super) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
+        for (blur, accumulate) in self.blurs.iter().zip(&self.accumulate) {
+            blur.submit(backend)?;
+            accumulate.execute(backend)?;
+        }
+        Ok(())
+    }
+}
+
+/// Build the RGB halo layer: blur the per-channel mask at every bounce and
+/// accumulate `w_k * strength[c] * blur` into `halo`. The caller owns `halo`
+/// and adds `max(0, halo - mask)` afterwards.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_rgb_halation_state(
+    mask: &[ImagePage],
+    halo: &[ImagePage],
+    width: u32,
+    height: u32,
+    sigma_px: [f32; 3],
+    strength: [f32; 3],
+    n_bounces: u32,
+    bounce_decay: f32,
+    backend: &WgpuBackend,
+) -> Result<Option<RgbHalationState>, String> {
+    let active = n_bounces > 0
+        && strength.iter().any(|&value| value > 0.0)
+        && sigma_px.iter().any(|&value| value > 0.0);
+    if !active {
+        return Ok(None);
+    }
+    let halo = halo.to_vec();
+    let n_pixels = (width as usize) * (height as usize);
+    let mut scratch = GaussianScratch::new(width, height);
+    let GaussianBuffers {
+        intermediate,
+        output,
+    } = scratch.buffers(backend, width, height)?;
+    let mut weights = vec![0.0_f64; n_bounces as usize];
+    for (k, weight) in weights.iter_mut().enumerate() {
+        *weight = f64::from(bounce_decay).powi(k as i32);
+    }
+    let sum: f64 = weights.iter().sum();
+    if sum > 0.0 {
+        for weight in &mut weights {
+            *weight /= sum;
+        }
+    }
+    let mut blurs = Vec::with_capacity(weights.len());
+    let mut accumulate = Vec::with_capacity(weights.len());
+    for (k, &weight) in weights.iter().enumerate() {
+        let sigma: [f64; 3] =
+            std::array::from_fn(|c| (f64::from(sigma_px[c]) * ((k as f64) + 1.0).sqrt()).max(1e-6));
+        let blur = build_grain_blur_paged_with_scratch(
+            backend,
+            width,
+            height,
+            mask,
+            &output,
+            Some(&intermediate),
+            sigma,
+            0,
+            0,
+        )
+        .map_err(|error| format!("rgb halation bounce {k} Gaussian: {error}"))?;
+        let scale = std::array::from_fn(|c| weight as f32 * strength[c]);
+        let accumulate_job = per_channel_job(
+            backend,
+            n_pixels as u32,
+            &output,
+            &halo,
+            scale,
+            k == 0,
+            &format!("rgb_halation_acc_{k}"),
+        )?;
+        blurs.push(blur);
+        accumulate.push(accumulate_job);
+    }
+    Ok(Some(RgbHalationState {
+        _intermediate: intermediate,
+        _output: output,
+        blurs,
+        accumulate,
+    }))
 }
 
 impl HalationState {

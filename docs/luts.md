@@ -50,6 +50,7 @@ See [the CLI guide](cli.md) for `--data-dir` selection rules.
 
 TOML fields match the typed `spektrafilm_core::lut_baker::BundleSpec`.
 Supplied CLI flags override file values.
+A paired bake may set `paired_halation`; the bundle records it in provenance with `included = false` and never applies it to the baked transform.
 A minimal spec is:
 
 ```toml

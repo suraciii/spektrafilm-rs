@@ -634,16 +634,18 @@ pub struct Lut3dLookGpuParams<'a> {
     pub strength: f32,
 }
 
-/// LUT halation appearance: a linear-light highlight mask followed by the
-/// declared multi-bounce response. `halation` carries the spatial response;
-/// scatter is disabled by the caller because LUT halation is an additive
-/// highlight layer, not a rewrite of the base image.
+/// RGB halation appearance: a maximum-channel highlight mask followed by the
+/// declared multi-bounce response. The kernel returns a halo layer; the LUT
+/// stage adds `max(0, halo - mask)` and never renormalizes.
 #[derive(Debug, Clone, Copy)]
 pub struct LutHalationGpuParams {
     pub mask_low: f32,
     pub mask_high: f32,
     pub mask_transition: f32,
-    pub halation: HalationGpuParams,
+    pub sigma_px: [f32; 3],
+    pub strength: [f32; 3],
+    pub n_bounces: u32,
+    pub bounce_decay: f32,
 }
 
 /// Output-referred appearance grain for a LUT look.

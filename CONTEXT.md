@@ -12,6 +12,9 @@ _Avoid_: Receiver capture, record density
 **Camera light leak**: Stray light that reaches a film record during exposure through a seal gap, a door hinge, or a failed light trap. It is an addition to record exposure, so development, in-emulsion scatter, and scanning treat it like image-forming light.
 _Avoid_: Light-leak overlay, encoded-domain leak
 
+**Multiple exposure**: The composition of two or more photographs on one output frame. Film Multiple Exposure sums record exposure before development; RGB Multiple Exposure sums linear light before the LUT transform.
+_Avoid_: Double exposure, exposure stack
+
 **Record density**: The optical density formed in one developed record of a film or a photographic paper. It describes the developed material, before a scan interprets it.
 _Avoid_: Scanned density, scan capture
 
@@ -102,9 +105,6 @@ _Avoid_: Look halation, LUT halation, image halation
 
 **Halation kernel**: The shared spatial point-spread response used by Film Halation and RGB Halation. It is not a render mode, input, or effect model.
 _Avoid_: Halation mode
-
-**Effect order**: The position of an RGB film effect relative to the LUT: before the look or after the look. It is a parameter, not an effect model.
-_Avoid_: Pre-look halation, post-look halation
 
 **Effect track**: The declared relationship between an effect capability and the two simulation methods: shared, dual-track, or single-track.
 _Avoid_: Effect mode, effect route

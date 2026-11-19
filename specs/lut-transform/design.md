@@ -46,7 +46,7 @@ RenderMode
 
 The mode is a top-level dispatch. LUT mode MUST NOT call film exposure, development, print, scan, spectral preparation, or film-grain engines.
 
-Off mode MUST NOT load a LUT file, spectral material, or execute LUT Grade. It executes the Effects stage and output color management.
+Off mode MUST NOT load a LUT file or spectral material. It executes the Effects stage, the independently active LUT Grade, and output color management.
 
 Film mode MUST NOT load an external LUT transform. A LUT transform is not a film profile and MUST NOT populate `film_profile` or `print_profile`.
 
@@ -54,24 +54,25 @@ Inactive mode values are retained as stored parameters. They are not consumed an
 
 ## Evaluation order
 
+The linear working RGB space is linear sRGB.
+
 LUT mode MUST evaluate in this order:
 
 ```text
 1. Decode input and convert to linear working RGB.
 2. Diffusion in linear light.
-3. RGB Halation when its effect order is before the LUT.
+3. RGB Halation in linear light.
 4. Shaper and LUT input transform.
 5. 3D LUT.
-6. RGB Halation when its effect order is after the LUT.
-7. Decode LUT output to linear output RGB.
-8. Optional LUT Grade.
-9. Existing output gamut processing.
-10. Output encoding.
-11. Grain in output encoding.
-12. Publish output.
+6. Decode LUT output to linear output RGB.
+7. Optional LUT Grade.
+8. Existing output gamut processing.
+9. Output encoding.
+10. Grain in output encoding.
+11. Publish output.
 ```
 
-Off mode MUST use the same order with steps 4 through 8 as exact bypasses:
+Off mode MUST use the same order with steps 4 through 7 as exact bypasses:
 
 ```text
 1. Decode input and convert to linear working RGB.
@@ -83,11 +84,17 @@ Off mode MUST use the same order with steps 4 through 8 as exact bypasses:
 7. Publish output.
 ```
 
-RGB Halation MUST run at exactly one declared position: before the LUT or after the LUT. The default follows [Halation models](../halation/spec.md#rgb-halation).
+RGB Halation MUST run before the LUT.
 
 Diffusion models lens scatter; RGB Halation models a highlight-scatter appearance. Diffusion therefore precedes RGB Halation.
 
-RGB Halation sees linear light. Its position determines whether it sees pre-LUT or post-LUT linear values. Grain sees final output encoding, so it is independent of LUT contrast.
+RGB Halation sees linear light before the LUT. Grain sees final output encoding, so it is independent of LUT contrast.
+
+### Multiple exposure stage split
+
+The pre-LUT effect stage MUST be separable from the LUT stage.
+RGB Multiple Exposure runs the effect stage per exposure and the LUT stage once after composition.
+The effect stage owns Diffusion and RGB Halation; the LUT stage owns the shaper, LUT, LUT Grade, output gamut, output encoding, and Grain.
 
 ## LUT stage
 
@@ -165,23 +172,51 @@ pub enum EffectPlacement {
 | Effect | Placement | Working domain | Shared implementation | Independent semantics |
 | --- | --- | --- | --- | --- |
 | Diffusion | PreLut | Linear scene RGB | Camera diffusion PSF/models | No film or print stage |
-| RGB Halation | PreLut or PostLut | Linear scene or LUT-output RGB | Shared PSF primitive | RGB model; no film density |
+| RGB Halation | PreLut | Linear scene RGB | Shared PSF primitive | RGB model; no film density |
 | LUT Grade | PostLut | Linear output RGB / Oklab | `finishing` | Optional, LUT-independent |
 | Grain | OutputEncoding | Encoded output RGB | Noise/hash primitive | Appearance grain, no film density or RMS |
 
 The table does not permit sharing a parameter object. Transform effects use their own parameter groups.
 
-Effects are active in LUT and Off. LUT Grade is active only in LUT. Film mode does not execute these groups.
+Effects are active in LUT and Off. LUT Grade is independent of the LUT table and MAY be active in LUT or Off. Film mode does not execute these groups.
 
 ### RGB Halation
 
 RGB Halation follows [Halation model design](../halation/design.md#rgb-halation-model).
 
-The LUT transform owns its stage placement and effect-order control.
+The RGB model is calibrated against the Film reference fixture.
+Calibration adjusts mask thresholds and per-channel strengths until halo extent, amplitude, and hue match.
+The result stays in `LutHalationParams`; it does not create a film-density dependency.
+
+The LUT transform owns its stage placement.
 
 The effect parameter group is `LutHalationParams`.
 
+The GUI primary controls are a derived view; `LutHalationParams` remains the stored wire type.
+
 `LutHalationParams` is the wire type for RGB Halation; the domain term is RGB Halation.
+
+```rust
+pub struct LutHalationParams {
+    pub active: bool,
+    pub mask_low: f64,
+    pub mask_high: f64,
+    pub mask_transition: f64,
+    pub sigma_um: [f64; 3],
+    pub strength: [f64; 3],
+    pub n_bounces: u32,
+    pub bounce_decay: f64,
+}
+```
+
+Mask thresholds and transition are linear-light values. The sigma values are micrometres on the fixed 35 mm reference frame.
+
+The thresholds are calibration controls for the Film visual target under [Halation model design](../halation/design.md#visual-equivalence).
+They MUST NOT be derived from film density or film exposure at runtime.
+
+The type MUST NOT carry film source-response, scatter, compression, or renormalization fields.
+
+Active RGB Halation MUST reject nonfinite values, `mask_low` outside `[0, 1)`, `mask_high` not above `mask_low`, a nonpositive `mask_transition`, a negative sigma or strength, a zero bounce count, and decay outside `[0, 1]`.
 
 ### Diffusion
 
@@ -193,7 +228,7 @@ The effect MUST be off by default. A LUT that already carries lens character MUS
 
 LUT Grade MUST call the existing finishing response on linear output RGB. It MUST preserve its existing neutral bypass and parameter validation.
 
-LUT Grade MUST be optional and active only in LUT mode. Off MUST bypass it without validating its values. LUT mode MUST NOT add a second tone curve, a second white balance, or a second output transform around it.
+LUT Grade MUST be optional and independent of the LUT table. It MAY be active in LUT mode or Off. LUT mode MUST NOT add a second tone curve, a second white balance, or a second output transform around it.
 
 ### Grain
 
@@ -281,7 +316,7 @@ A rejected update MUST preserve the preceding accepted parameters, image, and ou
 
 ## Execution
 
-CPU and GPU MUST evaluate the same LUT declaration, interpolation, effect order, and effect model. A backend MUST NOT substitute a different color transform or skip a spatial effect.
+CPU and GPU MUST evaluate the same LUT declaration, interpolation, and effect model. A backend MUST NOT substitute a different color transform or skip a spatial effect.
 
 The LUT lookup and grain field MUST be deterministic for the same input, declaration, parameters, seed, precision, and backend.
 
@@ -320,4 +355,4 @@ Adobe XMP and DCP creative profiles are not LUT carriers in this contract. A use
 5. No color space, domain, clamp, or fallback is inferred silently.
 6. The evaluation order is fixed.
 7. Same input, LUT hash, parameters, seed, precision, and backend produce a repeatable result under the compute contract.
-8. Off mode never executes LUT Grade.
+8. Off mode never executes a LUT table; it executes LUT Grade when active.

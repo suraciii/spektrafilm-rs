@@ -59,13 +59,15 @@ pub fn apply_halation_um(
     // f64 sigmas/lambdas — Python casts these via
     // `np.asarray(..., dtype=np.float64) * s_scale / pixel_size_um`.
     let pix_um_f64 = pixel_size_um as f64;
-    if scatter_amount > 0.0 {
+    let scatter_active = scatter_amount > 0.0
+        && (0..3).any(|c| {
+            scatter_core_um[c] * scatter_spatial_scale > 0.0
+                || scatter_tail_um[c] * scatter_spatial_scale > 0.0
+        });
+    if scatter_active {
         for c in 0..3 {
             let sigma_c_px_f64 = scatter_core_um[c] * scatter_spatial_scale / pix_um_f64;
             let lambda_t_px_f64 = scatter_tail_um[c] * scatter_spatial_scale / pix_um_f64;
-            if sigma_c_px_f64 <= 0.0 && lambda_t_px_f64 <= 0.0 {
-                continue;
-            }
             let sigma_c_px = sigma_c_px_f64.max(1e-6);
             let lambda_t_px = lambda_t_px_f64.max(1e-6);
             let core = gaussian_blur_channel(&channels[c], w, h, sigma_c_px);
@@ -88,10 +90,17 @@ pub fn apply_halation_um(
         halation_strength[1] * halation_amount,
         halation_strength[2] * halation_amount,
     ];
-    let source_channels = if source_compression > 0.0
-        && halation_n_bounces > 0
+    let sigma_first_px: [f64; 3] =
+        std::array::from_fn(|c| halation_first_sigma_um[c] * halation_spatial_scale / pix_um_f64);
+    // The reference activates the whole halation block only when at least
+    // one amplitude and at least one first sigma are positive. A zero
+    // sigma channel inside an active block is a near-delta blur that still
+    // participates in renormalization.
+    let halation_active = halation_n_bounces >= 1
         && a_tot.iter().any(|&value| value > 0.0)
-    {
+        && sigma_first_px.iter().any(|&value| value > 0.0);
+
+    let source_channels = if source_compression > 0.0 && halation_active {
         let mut source = channels.clone();
         for i in 0..n_pix {
             let peak = channels
@@ -115,7 +124,7 @@ pub fn apply_halation_um(
         None
     };
 
-    if halation_n_bounces >= 1 && (a_tot[0] > 0.0 || a_tot[1] > 0.0 || a_tot[2] > 0.0) {
+    if halation_active {
         let n_bounces = halation_n_bounces as usize;
         // Decay computed in f64 to match Python's `rho ** (k - 1)` and
         // subsequent normalize-by-sum at full f64 precision.
@@ -132,14 +141,9 @@ pub fn apply_halation_um(
             if a_tot[c] == 0.0 {
                 continue;
             }
-            let sigma_first_px_f64 =
-                halation_first_sigma_um[c] * halation_spatial_scale / pix_um_f64;
-            if sigma_first_px_f64 <= 0.0 {
-                continue;
-            }
             let mut hb = vec![ZERO; n_pix];
             for (k, &wk) in decay.iter().enumerate() {
-                let sigma_k = (sigma_first_px_f64 * ((k as f64) + 1.0).sqrt()).max(1e-6);
+                let sigma_k = (sigma_first_px[c] * ((k as f64) + 1.0).sqrt()).max(1e-6);
                 let blurred = source_channels.as_ref().map_or_else(
                     || gaussian_blur_channel(&channels[c], w, h, sigma_k),
                     |source| gaussian_blur_channel(&source[c], w, h, sigma_k),
@@ -171,6 +175,71 @@ pub fn apply_halation_um(
 
     for (c, channel) in channels.iter().enumerate() {
         out.write_channel(c, channel);
+    }
+    out
+}
+
+/// Shared multi-bounce spatial response for RGB Halation.
+///
+/// `mask` carries one prepared per-channel mask value per pixel. The returned
+/// image is the halo `L_c`; it is not added to the mask and it is never
+/// renormalized. Every channel shares the bounce decay; the per-channel
+/// strength belongs to the caller.
+pub fn rgb_halation_halo(
+    mask: &ImageBuf,
+    pixel_size_um: f64,
+    first_sigma_um: [f64; 3],
+    strength: [f64; 3],
+    n_bounces: u32,
+    bounce_decay: f64,
+) -> ImageBuf {
+    use spektrafilm_math::gaussian::gaussian_blur_channel;
+
+    let width = mask.width;
+    let height = mask.height;
+    let n_pixels = (width as usize) * (height as usize);
+    let mut out = ImageBuf::new(width, height);
+    let sigma_px: [f64; 3] =
+        std::array::from_fn(|c| first_sigma_um[c] / pixel_size_um.max(f64::EPSILON));
+    let active = n_bounces > 0
+        && strength.iter().any(|&value| value > 0.0)
+        && sigma_px.iter().any(|&value| value > 0.0);
+    if !active {
+        return out;
+    }
+
+    let n_bounces = n_bounces as usize;
+    let mut decay = vec![0.0f64; n_bounces];
+    for (k, slot) in decay.iter_mut().enumerate() {
+        *slot = bounce_decay.powi(k as i32);
+    }
+    let decay_sum: f64 = decay.iter().sum();
+    if decay_sum > 0.0 {
+        for value in &mut decay {
+            *value /= decay_sum;
+        }
+    }
+
+    for c in 0..3 {
+        if strength[c] == 0.0 {
+            continue;
+        }
+        let source = mask.extract_channel(c);
+        let mut halo = vec![ZERO; n_pixels];
+        for (k, &weight) in decay.iter().enumerate() {
+            // A zero channel stays near-delta inside an active response.
+            let sigma = (sigma_px[c] * ((k as f64) + 1.0).sqrt()).max(1e-6);
+            let blurred = gaussian_blur_channel(&source, width, height, sigma);
+            let weight = from_f64(weight);
+            for (target, value) in halo.iter_mut().zip(blurred) {
+                *target += weight * value;
+            }
+        }
+        let amplitude = from_f64(strength[c]);
+        for value in &mut halo {
+            *value *= amplitude;
+        }
+        out.write_channel(c, &halo);
     }
     out
 }
@@ -221,5 +290,89 @@ mod tests {
         let compressed_secondary = to_f64(compressed.get(5, 0)[0]);
         let compressed_primary = to_f64(compressed.get(1, 0)[0]);
         assert!(compressed_secondary / compressed_primary > linear_secondary / linear_primary);
+    }
+
+    fn render_halation(scale: f64, first_sigma_um: [f64; 3], strength: [f64; 3]) -> ImageBuf {
+        let mut image = ImageBuf::new(9, 1);
+        image.set(2, 0, [from_f64(1.0), from_f64(0.5), from_f64(0.25)]);
+        image.set(6, 0, [from_f64(0.25), from_f64(0.1), ZERO]);
+        apply_halation_um(
+            &image,
+            1.0,
+            0.0,
+            1.0,
+            [0.0; 3],
+            [0.0; 3],
+            [0.0; 3],
+            0.1,
+            scale,
+            0.0,
+            strength,
+            first_sigma_um,
+            3,
+            0.5,
+            true,
+            &CpuBackend,
+        )
+    }
+
+    #[test]
+    fn zero_spatial_scale_is_identity_with_renormalization() {
+        let source = render_halation(1.0, [65.0; 3], [0.0; 3]);
+        let output = render_halation(0.0, [65.0; 3], [0.15, 0.045, 0.005]);
+        assert_eq!(source.data, output.data);
+    }
+
+    #[test]
+    fn zero_sigma_channel_is_identity_with_renormalization() {
+        let source = render_halation(1.0, [0.0, 65.0, 65.0], [0.0; 3]);
+        let output = render_halation(1.0, [0.0, 65.0, 65.0], [0.15, 0.045, 0.005]);
+        for i in 0..9 {
+            let before = to_f64(source.get(i, 0)[0]);
+            let after = to_f64(output.get(i, 0)[0]);
+            assert!(
+                (after - before).abs() < 1e-5,
+                "pixel {i}: {after} != {before}"
+            );
+        }
+    }
+
+    #[test]
+    fn rgb_halo_reuses_the_film_multi_bounce_spatial_response() {
+        let mut source = ImageBuf::new(9, 1);
+        source.set(2, 0, [from_f64(1.0), from_f64(0.5), from_f64(0.25)]);
+        source.set(6, 0, [from_f64(0.25), from_f64(0.1), ZERO]);
+        let sigma = [65.0, 65.0, 65.0];
+        let strength = [0.15, 0.045, 0.005];
+        let film = apply_halation_um(
+            &source,
+            1.0,
+            0.0,
+            1.0,
+            [0.0; 3],
+            [0.0; 3],
+            [0.0; 3],
+            1.0,
+            1.0,
+            0.0,
+            strength,
+            sigma,
+            3,
+            0.5,
+            false,
+            &CpuBackend,
+        );
+        let rgb = rgb_halation_halo(&source, 1.0, sigma, strength, 3, 0.5);
+        for pixel in 0..9 {
+            for channel in 0..3 {
+                let expected =
+                    to_f64(film.get(pixel, 0)[channel]) - to_f64(source.get(pixel, 0)[channel]);
+                let actual = to_f64(rgb.get(pixel, 0)[channel]);
+                assert!(
+                    (expected - actual).abs() < 1e-5,
+                    "pixel {pixel} channel {channel}: {expected} != {actual}"
+                );
+            }
+        }
     }
 }

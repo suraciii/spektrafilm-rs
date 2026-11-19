@@ -37,7 +37,7 @@ A LUT is a color transform, not a film simulation. The product MUST NOT present 
 
 - LUT mode activates the LUT and Effects stages. It deactivates Film, Print, Scan, spectral camera controls, Scan Tone & Color, output mix, and CMYK.
 - Film mode deactivates the LUT and Effects stages.
-- Off mode deactivates Film, Print, Scan, LUT, LUT Grade, spectral camera controls, Scan Tone & Color, output mix, and CMYK.
+- Off mode deactivates Film, Print, Scan, LUT, spectral camera controls, Scan Tone & Color, output mix, and CMYK. LUT Grade remains independently optional.
 - Input processing and Output color management remain active in every mode.
 - Switching modes preserves all stored groups.
 - Selecting LUT without a usable declaration requests import or replacement. Cancelling or failing leaves the preceding mode active.
@@ -204,7 +204,7 @@ The LUT stage MUST identify the transform as non-spectral. Action labels MUST de
 
 The LUT stage MUST show all three domain axes. It MUST show a persistent warning with the clipped percentage when the latest accepted clamp render clips pixels. The warning MUST appear next to the LUT controls and MUST NOT rely on a truncated header or hover text.
 
-The Effects stage MUST expose independent Diffusion, Halation, and Grain controls. It MUST be active in LUT and Off and inactive in Film. LUT Grade belongs to the LUT stage and is active only in LUT.
+The Effects stage MUST expose independent Diffusion, Halation, and Grain controls. It MUST be active in LUT and Off and inactive in Film. LUT Grade is independent of the LUT table and MAY be active in LUT or Off.
 
 Film, Print, and Scan stages MUST remain reachable in LUT and Off with their headings, stored values, an explanation, and disabled bodies collapsed by default. Expanding an inactive stage MUST NOT execute or enable it.
 
@@ -223,7 +223,7 @@ The canonical parameter language MUST expose the mode, LUT declaration, Effects,
 - `--lut` MUST conflict with `--preset`, `--film`, `--paper`, `--route`, `--scan-film`, and `--feature-profile`. An explicit non-LUT `workflow.mode` edit MUST fail with `--lut`.
 - A LUT preset MUST NOT be combined with a Film preset, an Effects preset, a section preset, `--film`, `--paper`, `--route`, or `--scan-film` in one invocation.
 - Dry-run JSON and text MUST report the resolved mode, LUT declaration, Effects, and LUT Grade. In LUT mode they MUST NOT report film grain or other spectral stage controls as active.
-- In Off mode they MUST report no film, LUT, or LUT Grade, and MUST report the active Effects.
+- In Off mode they MUST report no film or LUT, and MUST report the active Effects and the independent LUT Grade state.
 - LUT canonical leaves MUST remain addressable through `--set` and discoverable through `describe`. Legacy `lut_look` paths MUST NOT be accepted.
 - `lut build` retains its existing LUT publication contract. It MUST NOT create or save a preset.
 - `preset list` MUST distinguish Film, LUT, Effects, and section kinds. `preset show` MUST validate the LUT file path and hash without reading LUT pixels into the document.
@@ -247,4 +247,4 @@ Each mode validates only its active declaration.
 
 1. Export a `.cube` from Film mode; import it explicitly; confirm that Film mode and the preset library are unchanged until import, and that import enters LUT mode only after a valid declaration.
 2. Save and apply a LUT preset; confirm that it switches LUT mode and preserves stored film, print, scanner, and route values. Confirm that it replaces Effects and LUT Grade, creates one Undo transaction, and fails without fallback when the LUT file is missing or changed.
-3. In Off mode, confirm that Effects render without a LUT or LUT Grade, a missing stored LUT does not block output, and an Effects preset applies Off mode without loading spectral materials or a LUT.
+3. In Off mode, confirm that Effects render without a LUT, an active LUT Grade renders independently, a missing stored LUT does not block output, and an Effects preset applies Off mode without loading spectral materials or a LUT.

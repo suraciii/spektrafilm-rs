@@ -334,11 +334,6 @@ impl App {
                             crate::i18n::text(ui.ctx(), "surfaces.lut.shaper"),
                             lut.shaper.name(),
                         ));
-                        grade_controls(
-                            ui,
-                            self.params.grade.get_or_insert_with(Default::default),
-                            &mut changed,
-                        );
                         changed
                     };
                     ui.horizontal(|ui| {
@@ -360,6 +355,25 @@ impl App {
                         self.label_adjustment("Adjust LUT look");
                         self.invalidate_look_render();
                     }
+                }
+            }
+            "LUT Grade" => {
+                let mut changed = false;
+                // Reading an absent group must not create accepted parameters.
+                let mut pending_grade = None;
+                let grade = self
+                    .params
+                    .grade
+                    .as_mut()
+                    .unwrap_or_else(|| pending_grade.get_or_insert_with(Default::default));
+                grade_controls(ui, grade, &mut changed);
+                if changed {
+                    if let Some(grade) = pending_grade {
+                        self.params.grade = Some(grade);
+                    }
+                    controls::record_edited_path(ui.ctx(), "grade");
+                    self.label_adjustment("Adjust LUT Grade");
+                    self.invalidate_look_render();
                 }
             }
             "Effects" => {
@@ -1103,7 +1117,7 @@ fn effects_controls(
     *changed |= ui
         .checkbox(
             &mut effects.halation.active,
-            crate::i18n::text(ui.ctx(), "surfaces.lut.halation"),
+            crate::i18n::text(ui.ctx(), "surfaces.lut.rgb_halation"),
         )
         .changed();
     *changed |= ui
@@ -1146,62 +1160,154 @@ fn effects_controls(
             .changed();
     }
     if effects.halation.active {
-        *changed |= ui
+        let mut radius = effects
+            .halation
+            .sigma_um
+            .iter()
+            .copied()
+            .fold(0.0_f64, f64::max);
+        if ui
             .add(
-                egui::Slider::new(&mut effects.halation.halation_amount, 0.0..=4.0)
-                    .text(crate::i18n::text(ui.ctx(), "surfaces.lut.halation_amount")),
+                egui::Slider::new(&mut radius, 0.0..=200.0)
+                    .text(crate::i18n::text(ui.ctx(), "surfaces.lut.radius")),
             )
-            .changed();
-        *changed |= ui
+            .changed()
+        {
+            if radius == 0.0 {
+                effects.halation.sigma_um = [0.0; 3];
+            } else {
+                let max_sigma = effects
+                    .halation
+                    .sigma_um
+                    .iter()
+                    .copied()
+                    .fold(0.0, f64::max);
+                if max_sigma <= 0.0 {
+                    effects.halation.sigma_um = [radius; 3];
+                } else {
+                    let scale = radius / max_sigma;
+                    for sigma in &mut effects.halation.sigma_um {
+                        *sigma *= scale;
+                    }
+                }
+            }
+            *changed = true;
+        }
+        let mut intensity = effects
+            .halation
+            .strength
+            .iter()
+            .copied()
+            .fold(0.0_f64, f64::max);
+        if ui
             .add(
-                egui::Slider::new(&mut effects.halation.boost_ev, -4.0..=8.0).text(
-                    crate::i18n::text(ui.ctx(), "surfaces.lut.halation_threshold"),
-                ),
+                egui::Slider::new(&mut intensity, 0.0..=4.0)
+                    .text(crate::i18n::text(ui.ctx(), "surfaces.lut.intensity")),
             )
-            .changed();
-        *changed |= ui
+            .changed()
+        {
+            if intensity == 0.0 {
+                effects.halation.strength = [0.0; 3];
+            } else {
+                let max_strength = effects
+                    .halation
+                    .strength
+                    .iter()
+                    .copied()
+                    .fold(0.0, f64::max);
+                if max_strength <= 0.0 {
+                    effects.halation.strength = [intensity; 3];
+                } else {
+                    let scale = intensity / max_strength;
+                    for strength in &mut effects.halation.strength {
+                        *strength *= scale;
+                    }
+                }
+            }
+            *changed = true;
+        }
+        let mut threshold = effects.halation.mask_low;
+        if ui
             .add(
-                egui::Slider::new(&mut effects.halation.boost_range, 0.0..=1.0)
-                    .text(crate::i18n::text(ui.ctx(), "surfaces.lut.halation_range")),
+                egui::Slider::new(&mut threshold, 0.0..=0.999)
+                    .text(crate::i18n::text(ui.ctx(), "surfaces.lut.threshold")),
             )
-            .changed();
-        *changed |= ui
-            .add(
-                egui::Slider::new(&mut effects.halation.protect_ev, 0.0..=8.0).text(
-                    crate::i18n::text(ui.ctx(), "surfaces.lut.halation_protection"),
-                ),
-            )
-            .changed();
-        for (channel, label) in ["R", "G", "B"].into_iter().enumerate() {
+            .changed()
+        {
+            let width = (effects.halation.mask_high - effects.halation.mask_low).max(1.0e-6);
+            effects.halation.mask_low = threshold;
+            effects.halation.mask_high = threshold + width;
+            *changed = true;
+        }
+        egui::CollapsingHeader::new(crate::i18n::text(
+            ui.ctx(),
+            "surfaces.lut.halation_advanced",
+        ))
+        .default_open(false)
+        .show(ui, |ui| {
+            for (channel, label) in ["R", "G", "B"].into_iter().enumerate() {
+                *changed |= ui
+                    .add(
+                        egui::Slider::new(&mut effects.halation.sigma_um[channel], 0.0..=200.0)
+                            .text(format!(
+                                "{} {label} (µm)",
+                                crate::i18n::text(ui.ctx(), "surfaces.lut.sigma")
+                            )),
+                    )
+                    .changed();
+                *changed |= ui
+                    .add(
+                        egui::Slider::new(&mut effects.halation.strength[channel], 0.0..=4.0).text(
+                            format!(
+                                "{} {label}",
+                                crate::i18n::text(ui.ctx(), "surfaces.lut.strength")
+                            ),
+                        ),
+                    )
+                    .changed();
+            }
             *changed |= ui
                 .add(
                     egui::Slider::new(
-                        &mut effects.halation.halation_first_sigma_um[channel],
-                        0.0..=200.0,
+                        &mut effects.halation.mask_low,
+                        0.0..=(effects.halation.mask_high - 1.0e-6).max(0.0),
                     )
-                    .text(format!(
-                        "{} {label} (µm)",
-                        crate::i18n::text(ui.ctx(), "surfaces.lut.halation_radius")
-                    )),
+                    .text(crate::i18n::text(ui.ctx(), "surfaces.lut.mask_low")),
                 )
                 .changed();
             *changed |= ui
                 .add(
-                    egui::Slider::new(&mut effects.halation.halation_strength[channel], 0.0..=1.0)
-                        .text(format!(
-                            "{} {label}",
-                            crate::i18n::text(ui.ctx(), "surfaces.lut.halation_tint")
+                    egui::Slider::new(
+                        &mut effects.halation.mask_high,
+                        (effects.halation.mask_low + 1.0e-6)..=4.0,
+                    )
+                    .text(crate::i18n::text(ui.ctx(), "surfaces.lut.mask_high")),
+                )
+                .changed();
+            *changed |= ui
+                .add(
+                    egui::Slider::new(&mut effects.halation.mask_transition, 0.001..=1.0)
+                        .text(crate::i18n::text(ui.ctx(), "surfaces.lut.mask_transition")),
+                )
+                .changed();
+            *changed |= ui
+                .add(
+                    egui::DragValue::new(&mut effects.halation.n_bounces)
+                        .speed(1.0)
+                        .range(1..=8)
+                        .prefix(format!(
+                            "{} ",
+                            crate::i18n::text(ui.ctx(), "surfaces.lut.bounces")
                         )),
                 )
                 .changed();
-        }
-        *changed |= ui
-            .add(
-                egui::Slider::new(&mut effects.halation.halation_spatial_scale, 0.0..=4.0).text(
-                    crate::i18n::text(ui.ctx(), "surfaces.lut.halation_radius_scale"),
-                ),
-            )
-            .changed();
+            *changed |= ui
+                .add(
+                    egui::Slider::new(&mut effects.halation.bounce_decay, 0.0..=1.0)
+                        .text(crate::i18n::text(ui.ctx(), "surfaces.lut.bounce_decay")),
+                )
+                .changed();
+        });
     }
     if effects.grain.active {
         *changed |= ui

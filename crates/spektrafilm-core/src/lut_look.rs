@@ -13,13 +13,11 @@ use sha2::{Digest, Sha256};
 use spektrafilm_backend::ComputeBackend;
 use spektrafilm_math::colorspace::{self, Cctf, RgbColorSpace, convert_rgb};
 use spektrafilm_math::image::ImageBuf;
-use spektrafilm_math::precision::{from_f64, to_f64};
+use spektrafilm_math::precision::{Scalar, from_f64, to_f64};
 
 use crate::gamut_compression::OutputGamutCompress;
 use crate::lut_formats::{LutDocument, read_cube_bytes};
-use crate::params::{
-    DiffusionFilterParams, FinishingParams, HalationParams, OutputGamutCompressParams,
-};
+use crate::params::{DiffusionFilterParams, FinishingParams, OutputGamutCompressParams};
 
 /// LUT-mode workflow selector. Film mode never reads the stored LUT file.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,24 +226,191 @@ impl LutGrainParams {
     }
 }
 
-fn inactive_halation() -> HalationParams {
-    HalationParams {
-        active: false,
-        ..HalationParams::default()
+/// RGB halation controls. This is the wire contract for the LUT and Off
+/// tracks; film halation keeps its own spectral parameters.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LutHalationParams {
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default = "default_rgb_halation_mask_low")]
+    pub mask_low: f64,
+    #[serde(default = "default_rgb_halation_mask_high")]
+    pub mask_high: f64,
+    #[serde(default = "default_rgb_halation_mask_transition")]
+    pub mask_transition: f64,
+    #[serde(default = "default_rgb_halation_sigma")]
+    pub sigma_um: [f64; 3],
+    #[serde(default = "default_rgb_halation_strength")]
+    pub strength: [f64; 3],
+    #[serde(default = "default_rgb_halation_bounces")]
+    pub n_bounces: u32,
+    #[serde(default = "default_rgb_halation_bounce_decay")]
+    pub bounce_decay: f64,
+}
+
+impl Default for LutHalationParams {
+    fn default() -> Self {
+        Self {
+            active: false,
+            mask_low: default_rgb_halation_mask_low(),
+            mask_high: default_rgb_halation_mask_high(),
+            mask_transition: default_rgb_halation_mask_transition(),
+            sigma_um: default_rgb_halation_sigma(),
+            strength: default_rgb_halation_strength(),
+            n_bounces: default_rgb_halation_bounces(),
+            bounce_decay: default_rgb_halation_bounce_decay(),
+        }
     }
 }
 
-fn deserialize_inactive_halation<'de, D>(deserializer: D) -> Result<HalationParams, D::Error>
+impl LutHalationParams {
+    /// Validate the active controls. Inactive values remain stored verbatim so
+    /// toggling the module cannot discard an edit.
+    pub fn validate(&self, prefix: &str) -> Result<(), String> {
+        if !self.active {
+            return Ok(());
+        }
+        for (name, value) in [
+            ("mask_low", self.mask_low),
+            ("mask_high", self.mask_high),
+            ("mask_transition", self.mask_transition),
+            ("bounce_decay", self.bounce_decay),
+        ] {
+            if !value.is_finite() {
+                return Err(format!("{prefix}.{name} must be finite"));
+            }
+        }
+        for (name, values) in [("sigma_um", self.sigma_um), ("strength", self.strength)] {
+            if values.iter().any(|value| !value.is_finite()) {
+                return Err(format!("{prefix}.{name} must be finite"));
+            }
+        }
+        if !(0.0..1.0).contains(&self.mask_low) {
+            return Err(format!("{prefix}.mask_low must be in [0, 1)"));
+        }
+        if self.mask_high <= self.mask_low {
+            return Err(format!("{prefix}.mask_high must be above mask_low"));
+        }
+        if self.mask_transition <= 0.0 {
+            return Err(format!("{prefix}.mask_transition must be positive"));
+        }
+        if self.sigma_um.iter().any(|value| *value < 0.0) {
+            return Err(format!("{prefix}.sigma_um must not be negative"));
+        }
+        if self.strength.iter().any(|value| *value < 0.0) {
+            return Err(format!("{prefix}.strength must not be negative"));
+        }
+        if self.n_bounces == 0 {
+            return Err(format!("{prefix}.n_bounces must be positive"));
+        }
+        if !(0.0..=1.0).contains(&self.bounce_decay) {
+            return Err(format!("{prefix}.bounce_decay must be between 0 and 1"));
+        }
+        Ok(())
+    }
+}
+
+fn default_rgb_halation_mask_low() -> f64 {
+    0.18
+}
+fn default_rgb_halation_mask_high() -> f64 {
+    0.9
+}
+fn default_rgb_halation_mask_transition() -> f64 {
+    0.1
+}
+fn default_rgb_halation_sigma() -> [f64; 3] {
+    [65.0, 65.0, 65.0]
+}
+fn default_rgb_halation_strength() -> [f64; 3] {
+    [0.05, 0.015, 0.0]
+}
+fn default_rgb_halation_bounces() -> u32 {
+    3
+}
+fn default_rgb_halation_bounce_decay() -> f64 {
+    0.5
+}
+
+fn inactive_halation() -> LutHalationParams {
+    LutHalationParams::default()
+}
+
+fn deserialize_inactive_halation<'de, D>(deserializer: D) -> Result<LutHalationParams, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let mut value = serde_json::Value::deserialize(deserializer)?;
-    if let Some(object) = value.as_object_mut()
-        && !object.contains_key("active")
-    {
-        object.insert("active".into(), false.into());
+    let value = serde_json::Value::deserialize(deserializer)?;
+    halation_from_json_value(value).map_err(serde::de::Error::custom)
+}
+
+pub(crate) fn halation_from_json_value(
+    mut value: serde_json::Value,
+) -> Result<LutHalationParams, String> {
+    let Some(object) = value.as_object_mut() else {
+        return Err("halation parameters must be a JSON object".into());
+    };
+    let new_keys = [
+        "mask_low",
+        "mask_high",
+        "mask_transition",
+        "sigma_um",
+        "strength",
+        "n_bounces",
+        "bounce_decay",
+    ];
+    if new_keys.iter().any(|key| object.contains_key(*key)) {
+        object
+            .entry("active".to_owned())
+            .or_insert(serde_json::Value::Bool(false));
+        return serde_json::from_value(value).map_err(|error| error.to_string());
     }
-    serde_json::from_value(value).map_err(serde::de::Error::custom)
+
+    // Legacy documents stored the film-shaped controls here. Preserve the
+    // visible strength and spatial scale, then let the new model apply its
+    // max-channel gate. Old-only controls have no RGB equivalent and are
+    // dropped during this one-way migration.
+    let number = |name: &str| object.get(name).and_then(serde_json::Value::as_f64);
+    let array = |name: &str| {
+        object
+            .get(name)
+            .and_then(|value| serde_json::from_value::<[f64; 3]>(value.clone()).ok())
+    };
+    let active = object
+        .get("active")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let spatial_scale = number("halation_spatial_scale").unwrap_or(1.0);
+    let amount = number("halation_amount").unwrap_or(1.0);
+    let sigma_um = array("halation_first_sigma_um")
+        .unwrap_or_else(default_rgb_halation_sigma)
+        .map(|value| value * spatial_scale);
+    let strength = array("halation_strength")
+        .unwrap_or_else(default_rgb_halation_strength)
+        .map(|value| value * amount);
+    let mask_low = (0.18 * 2.0_f64.powf(number("boost_ev").unwrap_or(0.0))).clamp(0.0, 0.999999);
+    let mask_high =
+        (0.18 * 2.0_f64.powf(number("protect_ev").unwrap_or(4.0))).max(mask_low + 1.0e-6);
+    let mask_transition =
+        ((2.0_f64.powf(number("boost_range").unwrap_or(0.3)) - 1.0) * mask_low * 2.0).max(1.0e-6);
+    let n_bounces = object
+        .get("halation_n_bounces")
+        .and_then(serde_json::Value::as_u64)
+        .map_or_else(default_rgb_halation_bounces, |value| {
+            value.min(u64::from(u32::MAX)) as u32
+        });
+    let bounce_decay = number("halation_bounce_decay").unwrap_or(0.5);
+    Ok(LutHalationParams {
+        active,
+        mask_low,
+        mask_high,
+        mask_transition,
+        sigma_um,
+        strength,
+        n_bounces,
+        bounce_decay,
+    })
 }
 
 /// Canonical LUT declaration and strength. Effects and LUT Grade live in
@@ -383,7 +548,7 @@ pub struct EffectsParams {
         default = "inactive_halation",
         deserialize_with = "deserialize_inactive_halation"
     )]
-    pub halation: HalationParams,
+    pub halation: LutHalationParams,
     #[serde(default)]
     pub diffusion: DiffusionFilterParams,
     #[serde(default)]
@@ -402,89 +567,7 @@ impl Default for EffectsParams {
 
 impl EffectsParams {
     pub fn validate(&self) -> Result<(), String> {
-        let halation = &self.halation;
-        if halation.active {
-            for (name, value) in [
-                ("scatter_amount", halation.scatter_amount),
-                ("scatter_spatial_scale", halation.scatter_spatial_scale),
-                ("halation_amount", halation.halation_amount),
-                ("halation_spatial_scale", halation.halation_spatial_scale),
-                ("source_compression", halation.source_compression),
-                ("boost_ev", f64::from(halation.boost_ev)),
-                ("boost_range", f64::from(halation.boost_range)),
-                ("protect_ev", f64::from(halation.protect_ev)),
-                ("halation_bounce_decay", halation.halation_bounce_decay),
-            ] {
-                if !value.is_finite() {
-                    return Err(format!("effects.halation.{name} must be finite"));
-                }
-            }
-            for (name, values) in [
-                ("scatter_core_um", halation.scatter_core_um),
-                ("scatter_tail_um", halation.scatter_tail_um),
-                ("scatter_tail_weight", halation.scatter_tail_weight),
-                ("halation_strength", halation.halation_strength),
-                ("halation_first_sigma_um", halation.halation_first_sigma_um),
-            ] {
-                if values.iter().any(|value| !value.is_finite()) {
-                    return Err(format!("effects.halation.{name} must be finite"));
-                }
-            }
-            if !(0.0..=0.999999).contains(&halation.source_compression) {
-                return Err("effects.halation.source_compression must be in [0, 0.999999]".into());
-            }
-            if halation
-                .halation_strength
-                .iter()
-                .any(|value| !(0.0..=1.0).contains(value))
-            {
-                return Err("effects.halation.halation_strength must be between 0 and 1".into());
-            }
-            if halation
-                .scatter_tail_weight
-                .iter()
-                .any(|value| !(0.0..=1.0).contains(value))
-            {
-                return Err("effects.halation.scatter_tail_weight must be between 0 and 1".into());
-            }
-            if !(0.0..=1.0).contains(&halation.halation_bounce_decay) {
-                return Err(
-                    "effects.halation.halation_bounce_decay must be between 0 and 1".into(),
-                );
-            }
-            for (name, value) in [
-                ("scatter_amount", halation.scatter_amount),
-                ("scatter_spatial_scale", halation.scatter_spatial_scale),
-                ("halation_amount", halation.halation_amount),
-                ("halation_spatial_scale", halation.halation_spatial_scale),
-            ]
-            .into_iter()
-            .chain(
-                halation
-                    .scatter_core_um
-                    .iter()
-                    .copied()
-                    .map(|value| ("scatter_core_um", value)),
-            )
-            .chain(
-                halation
-                    .scatter_tail_um
-                    .iter()
-                    .copied()
-                    .map(|value| ("scatter_tail_um", value)),
-            )
-            .chain(
-                halation
-                    .halation_first_sigma_um
-                    .iter()
-                    .copied()
-                    .map(|value| ("halation_first_sigma_um", value)),
-            ) {
-                if value < 0.0 {
-                    return Err(format!("effects.halation.{name} must not be negative"));
-                }
-            }
-        }
+        self.halation.validate("effects.halation")?;
         if self.diffusion.active {
             if !spektrafilm_model::diffusion::VALID_FAMILIES
                 .contains(&self.diffusion.filter_family.as_str())
@@ -566,7 +649,7 @@ pub struct LutLookParams {
         default = "inactive_halation",
         deserialize_with = "deserialize_inactive_halation"
     )]
-    pub halation: HalationParams,
+    pub halation: LutHalationParams,
     #[serde(default)]
     pub diffusion: DiffusionFilterParams,
     #[serde(default)]
@@ -742,89 +825,7 @@ impl LutLookParams {
         if self.grade_active {
             self.grade.validate()?;
         }
-        if self.halation.active {
-            let halation = &self.halation;
-            for (name, value) in [
-                ("scatter_amount", halation.scatter_amount),
-                ("scatter_spatial_scale", halation.scatter_spatial_scale),
-                ("halation_amount", halation.halation_amount),
-                ("halation_spatial_scale", halation.halation_spatial_scale),
-                ("source_compression", halation.source_compression),
-                ("boost_ev", f64::from(halation.boost_ev)),
-                ("boost_range", f64::from(halation.boost_range)),
-                ("protect_ev", f64::from(halation.protect_ev)),
-                ("halation_bounce_decay", halation.halation_bounce_decay),
-            ] {
-                if !value.is_finite() {
-                    return Err(format!("lut_look.halation.{name} must be finite"));
-                }
-            }
-            for (name, values) in [
-                ("scatter_core_um", halation.scatter_core_um),
-                ("scatter_tail_um", halation.scatter_tail_um),
-                ("scatter_tail_weight", halation.scatter_tail_weight),
-                ("halation_strength", halation.halation_strength),
-                ("halation_first_sigma_um", halation.halation_first_sigma_um),
-            ] {
-                if values.iter().any(|value| !value.is_finite()) {
-                    return Err(format!("lut_look.halation.{name} must be finite"));
-                }
-            }
-            if !(0.0..=0.999999).contains(&halation.source_compression) {
-                return Err("lut_look.halation.source_compression must be in [0, 0.999999]".into());
-            }
-            if halation
-                .halation_strength
-                .iter()
-                .any(|value| !(0.0..=1.0).contains(value))
-            {
-                return Err("lut_look.halation.halation_strength must be between 0 and 1".into());
-            }
-            if halation
-                .scatter_tail_weight
-                .iter()
-                .any(|value| !(0.0..=1.0).contains(value))
-            {
-                return Err("lut_look.halation.scatter_tail_weight must be between 0 and 1".into());
-            }
-            if !(0.0..=1.0).contains(&halation.halation_bounce_decay) {
-                return Err(
-                    "lut_look.halation.halation_bounce_decay must be between 0 and 1".into(),
-                );
-            }
-            for (name, value) in [
-                ("scatter_amount", halation.scatter_amount),
-                ("scatter_spatial_scale", halation.scatter_spatial_scale),
-                ("halation_amount", halation.halation_amount),
-                ("halation_spatial_scale", halation.halation_spatial_scale),
-            ]
-            .into_iter()
-            .chain(
-                halation
-                    .scatter_core_um
-                    .iter()
-                    .copied()
-                    .map(|value| ("scatter_core_um", value)),
-            )
-            .chain(
-                halation
-                    .scatter_tail_um
-                    .iter()
-                    .copied()
-                    .map(|value| ("scatter_tail_um", value)),
-            )
-            .chain(
-                halation
-                    .halation_first_sigma_um
-                    .iter()
-                    .copied()
-                    .map(|value| ("halation_first_sigma_um", value)),
-            ) {
-                if value < 0.0 {
-                    return Err(format!("lut_look.halation.{name} must not be negative"));
-                }
-            }
-        }
+        self.halation.validate("lut_look.halation")?;
         if self.diffusion.active {
             if !spektrafilm_model::diffusion::VALID_FAMILIES
                 .contains(&self.diffusion.filter_family.as_str())
@@ -991,6 +992,17 @@ fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+fn identity_document() -> LutDocument {
+    LutDocument {
+        resolution: 2,
+        table: vec![[0.0, 0.0, 0.0]; 8],
+        shaper: None,
+        domain_min: [0.0; 3],
+        domain_max: [1.0; 3],
+        title: String::new(),
+    }
+}
+
 pub fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -1013,33 +1025,73 @@ pub struct LutLook {
 
 impl LutLook {
     /// Build the internal render aggregate for Off mode. A strength-zero
-    /// identity transform keeps the shared effect, gamut, encoding, and grain
-    /// tail without reading a LUT file or executing LUT Grade.
-    pub fn off(effects: &EffectsParams) -> Result<Self, String> {
+    /// identity transform keeps the shared effect, grade, gamut, encoding, and
+    /// grain tail without reading a LUT file or executing the LUT table.
+    pub fn off(effects: &EffectsParams, grade: Option<&GradeParams>) -> Result<Self, String> {
         effects.validate()?;
-        let linear = LutSpace::SrgbLinear.color_space();
+        if let Some(grade) = grade
+            && grade.active
+        {
+            grade.validate()?;
+        }
         let declaration = LutParams {
             input_space: LutSpace::SrgbLinear,
             output_space: LutSpace::SrgbLinear,
             strength: 0.0,
             ..LutParams::default()
         };
-        let params = LutLookParams::from_groups(&declaration, Some(effects), None);
-        Ok(Self {
-            document: LutDocument {
-                resolution: 2,
-                table: vec![[0.0, 0.0, 0.0]; 8],
-                shaper: None,
-                domain_min: [0.0; 3],
-                domain_max: [1.0; 3],
-                title: String::new(),
-            },
+        let params = LutLookParams::from_groups(&declaration, Some(effects), grade);
+        Ok(Self::identity(params))
+    }
+
+    /// Build an identity look around a split RGB declaration. The caller owns
+    /// module activation: effects, grade, and grain may each be active while
+    /// the LUT table stays at strength zero.
+    pub fn identity(params: LutLookParams) -> Self {
+        let linear = LutSpace::SrgbLinear.color_space();
+        Self {
+            document: identity_document(),
             params,
             input: linear,
             output: linear,
             clipped_pixels: AtomicU64::new(0),
             evaluated_pixels: AtomicU64::new(0),
-        })
+        }
+    }
+
+    /// The per-shot RGB stage: effects only, in linear sRGB, with no LUT table,
+    /// no grade, and no grain. The caller owns EV and clamp before this call.
+    pub fn effects_only(&self) -> Self {
+        let mut params = self.params.clone();
+        params.path = PathBuf::new();
+        params.sha256.clear();
+        params.title.clear();
+        params.input_space = LutSpace::SrgbLinear;
+        params.output_space = LutSpace::SrgbLinear;
+        params.domain_min = [0.0; 3];
+        params.domain_max = [1.0; 3];
+        params.shaper = LutShaper::None;
+        params.strength = 0.0;
+        params.grade_active = false;
+        params.grade = FinishingParams::default();
+        params.grain.active = false;
+        Self::identity(params)
+    }
+
+    /// The composition tail: the declared LUT, LUT Grade, grain, gamut, and
+    /// output transfer, with no per-shot effects.
+    pub fn look_only(&self) -> Self {
+        let mut params = self.params.clone();
+        params.halation.active = false;
+        params.diffusion.active = false;
+        Self {
+            document: self.document.clone(),
+            params,
+            input: self.input,
+            output: self.output,
+            clipped_pixels: AtomicU64::new(0),
+            evaluated_pixels: AtomicU64::new(0),
+        }
     }
 
     pub fn params(&self) -> &LutLookParams {
@@ -1091,6 +1143,17 @@ impl LutLook {
         self.verify_source()?;
         self.clipped_pixels.store(0, Ordering::Relaxed);
         self.evaluated_pixels.store(0, Ordering::Relaxed);
+        if self.params.halation.active
+            && self
+                .params
+                .halation
+                .sigma_um
+                .iter()
+                .any(|value| *value > 0.0)
+            && !(pixel_size_um.is_finite() && pixel_size_um > 0.0)
+        {
+            return Err("RGB halation requires a positive pixel pitch".into());
+        }
         // One declaration, one effect order. The device route evaluates the
         // same parameters and fails by name when a stage is unavailable.
         if backend.is_gpu() {
@@ -1132,56 +1195,7 @@ impl LutLook {
                 )?;
             }
             if self.params.halation.active {
-                let halation = &self.params.halation;
-                // Halation is an additive highlight layer, not a rewrite of the
-                // base image. Build the highlight mask from linear luminance,
-                // apply the spatial response to that mask alone, and add only
-                // the difference back to the untouched LUT result.
-                let low = 0.18 * 2.0_f64.powf(f64::from(halation.boost_ev));
-                let high = 0.18 * 2.0_f64.powf(f64::from(halation.protect_ev));
-                let transition = (2.0_f64.powf(f64::from(halation.boost_range)) - 1.0) * low * 2.0;
-                let mut mask = out.clone();
-                mask.par_pixels_mut().for_each(|pixel| {
-                    let luma = 0.2126 * to_f64(pixel[0])
-                        + 0.7152 * to_f64(pixel[1])
-                        + 0.0722 * to_f64(pixel[2]);
-                    let rise = smoothstep(low, low + transition.max(f64::EPSILON), luma);
-                    let fall = 1.0
-                        - smoothstep(
-                            high + transition.max(f64::EPSILON),
-                            high + 2.0 * transition.max(f64::EPSILON),
-                            luma,
-                        );
-                    let value = from_f64(rise * fall);
-                    pixel.fill(value);
-                });
-                let halo = spektrafilm_model::halation::apply_halation_um(
-                    &mask,
-                    pixel_size_um.max(1.0) as f32,
-                    0.0,
-                    halation.scatter_spatial_scale,
-                    [0.0; 3],
-                    [0.0; 3],
-                    [0.0; 3],
-                    halation.halation_amount,
-                    halation.halation_spatial_scale,
-                    halation.source_compression,
-                    halation.halation_strength,
-                    halation.halation_first_sigma_um,
-                    halation.halation_n_bounces,
-                    halation.halation_bounce_decay,
-                    halation.halation_renormalize,
-                    backend,
-                );
-                out.par_pixels_mut()
-                    .zip(halo.data.as_chunks::<3>().0)
-                    .zip(mask.data.as_chunks::<3>().0)
-                    .for_each(|((pixel, halo), mask)| {
-                        for channel in 0..3 {
-                            let addition = to_f64(halo[channel]) - to_f64(mask[channel]);
-                            pixel[channel] = from_f64(to_f64(pixel[channel]) + addition.max(0.0));
-                        }
-                    });
+                out = apply_rgb_halation(&out, &self.params.halation, pixel_size_um);
             }
             (linear_srgb, false)
         } else {
@@ -1400,31 +1414,16 @@ impl LutLook {
             }
             if self.params.halation.active {
                 let halation = &self.params.halation;
-                let low = 0.18 * 2.0_f64.powf(f64::from(halation.boost_ev));
-                let high = 0.18 * 2.0_f64.powf(f64::from(halation.protect_ev));
-                let transition = (2.0_f64.powf(f64::from(halation.boost_range)) - 1.0) * low * 2.0;
-                let pix_um = pixel_size_um.max(1.0);
                 let params = spektrafilm_backend::LutHalationGpuParams {
-                    mask_low: low as f32,
-                    mask_high: high as f32,
-                    mask_transition: transition as f32,
-                    halation: spektrafilm_backend::HalationGpuParams {
-                        scatter_amount: 0.0,
-                        scatter_core_px: [0.0; 3],
-                        scatter_tail_px: [0.0; 3],
-                        scatter_tail_weight: [0.0; 3],
-                        source_compression: halation.source_compression as f32,
-                        halation_a_tot: std::array::from_fn(|c| {
-                            (halation.halation_strength[c] * halation.halation_amount) as f32
-                        }),
-                        halation_first_sigma_px: std::array::from_fn(|c| {
-                            (halation.halation_first_sigma_um[c] * halation.halation_spatial_scale
-                                / pix_um) as f32
-                        }),
-                        halation_n_bounces: halation.halation_n_bounces,
-                        halation_bounce_decay: halation.halation_bounce_decay as f32,
-                        halation_renormalize: halation.halation_renormalize,
-                    },
+                    mask_low: halation.mask_low as f32,
+                    mask_high: halation.mask_high as f32,
+                    mask_transition: halation.mask_transition as f32,
+                    sigma_px: std::array::from_fn(|c| {
+                        (halation.sigma_um[c] / pixel_size_um) as f32
+                    }),
+                    strength: halation.strength.map(|value| value as f32),
+                    n_bounces: halation.n_bounces,
+                    bounce_decay: halation.bounce_decay as f32,
                 };
                 out = backend.lut_halation(&out, &params)?.ok_or_else(|| {
                     "lut_halation: selected GPU has no LUT halation operation".to_owned()
@@ -1602,6 +1601,59 @@ fn smoothstep(edge0: f64, edge1: f64, value: f64) -> f64 {
     }
     let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+fn apply_rgb_halation(
+    image: &ImageBuf,
+    halation: &LutHalationParams,
+    pixel_size_um: f64,
+) -> ImageBuf {
+    if halation.sigma_um.iter().all(|value| *value == 0.0) {
+        return image.clone();
+    }
+    let width = image.width;
+    let height = image.height;
+    let n_pixels = (width as usize) * (height as usize);
+    let low = halation.mask_low;
+    let transition = halation.mask_transition;
+    let high = halation.mask_high;
+    let span = 1.0 - low;
+    let mut channels: [Vec<Scalar>; 3] = [
+        vec![from_f64(0.0); n_pixels],
+        vec![from_f64(0.0); n_pixels],
+        vec![from_f64(0.0); n_pixels],
+    ];
+    for (i, pixel) in image.data.as_chunks::<3>().0.iter().enumerate() {
+        let rgb = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
+        let peak = rgb[0].max(rgb[1]).max(rgb[2]);
+        let gate = smoothstep(low, low + transition, peak)
+            * (1.0 - smoothstep(high + transition, high + 2.0 * transition, peak));
+        for channel in 0..3 {
+            channels[channel][i] = from_f64(gate * (rgb[channel] - low).max(0.0) / span);
+        }
+    }
+    let mut mask = ImageBuf::new(width, height);
+    for (channel, values) in channels.iter().enumerate() {
+        mask.write_channel(channel, values);
+    }
+    let halo = spektrafilm_model::halation::rgb_halation_halo(
+        &mask,
+        pixel_size_um,
+        halation.sigma_um,
+        halation.strength,
+        halation.n_bounces,
+        halation.bounce_decay,
+    );
+    let mut out = image.clone();
+    out.par_pixels_mut().enumerate().for_each(|(i, pixel)| {
+        for (channel, value) in pixel.iter_mut().enumerate() {
+            let mask_value = to_f64(mask.data[i * 3 + channel]);
+            let halo_value = to_f64(halo.data[i * 3 + channel]);
+            let addition = (halo_value - mask_value).max(0.0);
+            *value = from_f64(to_f64(*value) + addition);
+        }
+    });
+    out
 }
 
 fn normalize_lut_input(input: [f64; 3], min: [f64; 3], span: [f64; 3]) -> [f64; 3] {
@@ -1793,11 +1845,9 @@ mod tests {
     fn halation_is_an_additive_highlight_layer_and_never_rewrites_dark_pixels() {
         let document = identity(2);
         let mut params = LutLookParams {
-            halation: HalationParams {
+            halation: LutHalationParams {
                 active: true,
-                halation_amount: 1.0,
-                scatter_amount: 1.0,
-                ..HalationParams::default()
+                ..LutHalationParams::default()
             },
             grade_active: false,
             ..LutLookParams::default()
@@ -1836,6 +1886,125 @@ mod tests {
         for (channel, expected) in dark.iter().enumerate() {
             assert!((rendered.data[channel] - expected).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn rgb_halation_uses_the_max_channel_gate_and_per_channel_amplitude() {
+        let params = LutHalationParams {
+            active: true,
+            mask_low: 0.5,
+            mask_high: 2.0,
+            mask_transition: 0.1,
+            sigma_um: [1.5; 3],
+            strength: [0.0, 0.0, 0.8],
+            n_bounces: 1,
+            bounce_decay: 0.5,
+        };
+        let mut data = vec![from_f64(0.0); 7 * 3];
+        data[3 * 3 + 2] = from_f64(1.0);
+        let image = ImageBuf::from_data(7, 1, data);
+        let rendered = apply_rgb_halation(&image, &params, 1.0);
+        for pixel in rendered.data.as_chunks::<3>().0 {
+            assert_eq!(to_f64(pixel[0]), 0.0);
+            assert_eq!(to_f64(pixel[1]), 0.0);
+        }
+        assert!(
+            to_f64(rendered.get(2, 0)[2]) > 0.0,
+            "blue halo did not spread from a saturated blue source"
+        );
+    }
+
+    #[test]
+    fn rgb_halation_all_zero_sigma_is_an_exact_bypass() {
+        let params = LutHalationParams {
+            active: true,
+            mask_low: 0.1,
+            sigma_um: [0.0; 3],
+            strength: [0.8; 3],
+            ..LutHalationParams::default()
+        };
+        let mut data = vec![from_f64(0.0); 5 * 3];
+        data[2 * 3 + 2] = from_f64(1.0);
+        let image = ImageBuf::from_data(5, 1, data);
+        let rendered = apply_rgb_halation(&image, &params, 1.0);
+        assert_eq!(rendered.data, image.data);
+    }
+
+    #[test]
+    fn device_rgb_halation_all_zero_sigma_is_an_exact_bypass() {
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let mut data = vec![from_f64(0.0); 5 * 3];
+        data[2 * 3 + 2] = from_f64(1.0);
+        let image = ImageBuf::from_data(5, 1, data);
+        let params = spektrafilm_backend::LutHalationGpuParams {
+            mask_low: 0.1,
+            mask_high: 2.0,
+            mask_transition: 0.1,
+            sigma_px: [0.0; 3],
+            strength: [0.8; 3],
+            n_bounces: 1,
+            bounce_decay: 0.5,
+        };
+        let rendered = gpu
+            .backend()
+            .lut_halation(&image, &params)
+            .unwrap()
+            .expect("GPU LUT halation");
+        assert_eq!(rendered.data, image.data);
+    }
+
+    #[test]
+    fn rgb_halation_validates_the_active_window_and_response() {
+        let mut params = LutHalationParams {
+            active: true,
+            ..LutHalationParams::default()
+        };
+        assert!(params.validate("rgb_halation").is_ok());
+        params.mask_low = 1.0;
+        assert!(params.validate("rgb_halation").is_err());
+        params.mask_low = 0.5;
+        params.mask_high = 0.4;
+        assert!(params.validate("rgb_halation").is_err());
+        params.mask_high = 2.0;
+        params.mask_transition = 0.0;
+        assert!(params.validate("rgb_halation").is_err());
+        params.mask_transition = 0.1;
+        params.sigma_um[1] = -1.0;
+        assert!(params.validate("rgb_halation").is_err());
+        params.sigma_um[1] = 1.0;
+        params.strength[2] = -1.0;
+        assert!(params.validate("rgb_halation").is_err());
+        params.strength[2] = 0.0;
+        params.n_bounces = 0;
+        assert!(params.validate("rgb_halation").is_err());
+        params.n_bounces = 1;
+        params.bounce_decay = 1.1;
+        assert!(params.validate("rgb_halation").is_err());
+    }
+
+    #[test]
+    fn legacy_effects_halation_migrates_to_rgb_controls() {
+        let legacy = serde_json::json!({
+            "active": true,
+            "halation_amount": 0.5,
+            "halation_spatial_scale": 2.0,
+            "halation_strength": [0.2, 0.1, 0.0],
+            "halation_first_sigma_um": [10.0, 20.0, 30.0],
+            "halation_n_bounces": 2,
+            "halation_bounce_decay": 0.25,
+            "boost_ev": 0.0,
+            "protect_ev": 4.0,
+            "boost_range": 0.3
+        });
+        let params = halation_from_json_value(legacy).unwrap();
+        assert!(params.active);
+        assert!((params.strength[0] - 0.1).abs() < 1e-12);
+        assert!((params.strength[1] - 0.05).abs() < 1e-12);
+        assert_eq!(params.sigma_um, [20.0, 40.0, 60.0]);
+        assert_eq!(params.n_bounces, 2);
+        assert_eq!(params.bounce_decay, 0.25);
+        assert!(params.mask_high > params.mask_low);
+        assert!(params.mask_transition > 0.0);
     }
 
     #[test]
@@ -1916,9 +2085,9 @@ mod tests {
         use spektrafilm_backend::ComputeBackend;
         let gpu = spektrafilm_gpu::test_support::explicit_adapter();
         let mut params = LutLookParams {
-            halation: HalationParams {
+            halation: LutHalationParams {
                 active: true,
-                ..HalationParams::default()
+                ..LutHalationParams::default()
             },
             grade_active: false,
             domain_max: [2.0; 3],

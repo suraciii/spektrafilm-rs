@@ -200,6 +200,9 @@ pub struct BundleSpec {
     pub ocio_config: bool,
     #[serde(default)]
     pub include_combinations: bool,
+    /// Paired RGB Halation configuration to record, never to bake.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paired_halation: Option<crate::lut_look::LutHalationParams>,
 }
 fn deserialize_stops<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
     #[derive(Deserialize)]

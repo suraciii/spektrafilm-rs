@@ -507,8 +507,10 @@ fn runtime_owner(path: &str) -> (ControlOwner, &'static str) {
     use ControlOwner::Stage as Owner;
     if path == "workflow.mode" {
         (ControlOwner::Global, "Workflow")
-    } else if path.starts_with("lut.") || path.starts_with("grade.") {
+    } else if path.starts_with("lut.") {
         (Owner(Stage::Look), "LUT look")
+    } else if path.starts_with("grade.") {
+        (Owner(Stage::Look), "LUT Grade")
     } else if path.starts_with("effects.") {
         (Owner(Stage::Effects), "Effects")
     } else if path.starts_with("film_render.grain.") {

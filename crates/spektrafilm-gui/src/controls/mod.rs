@@ -619,9 +619,7 @@ impl Stage {
         match mode {
             WorkflowMode::Film => !matches!(self, Self::Look | Self::Effects),
             WorkflowMode::Lut => !matches!(self, Self::Film | Self::Print | Self::Scan),
-            WorkflowMode::Off => {
-                !matches!(self, Self::Film | Self::Print | Self::Scan | Self::Look)
-            }
+            WorkflowMode::Off => !matches!(self, Self::Film | Self::Print | Self::Scan),
         }
     }
 
@@ -646,6 +644,7 @@ impl Stage {
 pub(crate) fn inactive_in_workflow(section: &str, mode: WorkflowMode) -> bool {
     match section {
         "LUT look" => !mode.is_lut(),
+        "LUT Grade" => mode.is_film(),
         "Effects" => mode.is_film(),
         _ if mode.is_film() => false,
         _ => matches!(
@@ -718,7 +717,7 @@ pub(crate) const STAGE_LAYOUT: &[(Stage, &[&str])] = &[
         Stage::Scan,
         &["Scanner", "Scan Profile", "Glare", "Finishing"],
     ),
-    (Stage::Look, &["LUT look"]),
+    (Stage::Look, &["LUT look", "LUT Grade"]),
     (Stage::Effects, &["Effects"]),
     (
         Stage::Output,
@@ -1164,6 +1163,7 @@ mod tests {
             (Lut, "Effects", false),
             (Lut, "Film material", true),
             (Off, "LUT look", true),
+            (Off, "LUT Grade", false),
             (Off, "Effects", false),
             (Off, "Film material", true),
         ] {
@@ -1181,7 +1181,7 @@ mod tests {
             (Lut, Stage::Look, true),
             (Lut, Stage::Effects, true),
             (Lut, Stage::Film, false),
-            (Off, Stage::Look, false),
+            (Off, Stage::Look, true),
             (Off, Stage::Effects, true),
         ] {
             assert_eq!(stage.active_in(mode), expected, "{mode:?} / {stage:?}");

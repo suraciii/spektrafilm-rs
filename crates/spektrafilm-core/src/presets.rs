@@ -489,7 +489,7 @@ struct LutDeclarationWire<'a> {
 }
 #[derive(Serialize)]
 struct LutEffectsWire<'a> {
-    halation: &'a crate::params::HalationParams,
+    halation: &'a crate::lut_look::LutHalationParams,
     diffusion: &'a DiffusionFilterParams,
     grain: &'a crate::lut_look::LutGrainParams,
 }
@@ -1043,7 +1043,7 @@ impl Preset {
                     #[derive(Deserialize)]
                     #[serde(deny_unknown_fields)]
                     struct EffectsWire {
-                        halation: Option<crate::params::HalationParams>,
+                        halation: Option<serde_json::Value>,
                         diffusion: Option<DiffusionFilterParams>,
                         grain: Option<crate::lut_look::LutGrainParams>,
                     }
@@ -1064,13 +1064,19 @@ impl Preset {
                             grain: None,
                         },
                     };
-                    lut.halation =
-                        effects
-                            .halation
-                            .unwrap_or_else(|| crate::params::HalationParams {
-                                active: false,
-                                ..crate::params::HalationParams::default()
-                            });
+                    lut.halation = match effects.halation {
+                        Some(value) => {
+                            crate::lut_look::halation_from_json_value(value).map_err(|detail| {
+                                PresetDocumentError::new(
+                                    PresetDocumentReason::Parser {
+                                        detail: detail.clone(),
+                                    },
+                                    format!("invalid lut halation group: {detail}"),
+                                )
+                            })?
+                        }
+                        None => crate::lut_look::LutHalationParams::default(),
+                    };
                     lut.diffusion = effects.diffusion.unwrap_or_default();
                     lut.grain = effects.grain.unwrap_or_default();
                     let grade = wire

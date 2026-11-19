@@ -231,9 +231,28 @@ The Grain module MUST NOT be presented as a global effects module or shared with
 
 The Film stage's halation control is Film Halation; the Effects stage's halation control is RGB Halation.
 
-RGB Halation MUST expose mask low, high, transition, spatial response, per-channel strength, and effect order under `effects.halation`.
+RGB Halation MUST expose `Radius`, `Intensity`, and `Threshold` as primary controls under `effects.halation`.
+An advanced disclosure MUST expose per-channel sigma and strength, mask low, high, and transition, bounce count, and bounce decay.
+The stored `LutHalationParams` values remain authoritative; the primary controls MUST derive from them.
 
-Its effect-order control MUST use `Before look` or `After look`.
+`Radius` MUST be a length in micrometres on the fixed 35 mm reference frame.
+`Intensity` MUST be a nonnegative strength.
+`Threshold` MUST be a linear-light mask value from zero to one, excluding one.
+
+| Primary control | Displayed value |
+| --- | --- |
+| `Radius` | The largest stored sigma. |
+| `Intensity` | The largest stored strength. |
+| `Threshold` | The stored mask low. |
+
+When the displayed Radius or Intensity is zero, a primary edit MUST set all three stored values to the new value.
+
+A `Radius` edit MUST scale all three stored sigma values by one factor.
+An `Intensity` edit MUST scale all three stored strength values by one factor.
+A `Threshold` edit MUST move the stored mask window to the new lower bound and preserve its width.
+
+An advanced edit MUST replace one stored value.
+The primary controls MUST NOT create a second parameter model.
 
 Each editable RGB component MUST remain available.
 

@@ -155,7 +155,7 @@ pub(crate) fn print_text(report: &Value) {
             println!("  mode: off");
             print_effects(params);
             println!("  lut: inactive");
-            println!("  lut grade: inactive");
+            print_grade(params);
             println!(
                 "  film stages: {}",
                 value(&report["workflow"]["film_stages"])
