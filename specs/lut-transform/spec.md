@@ -107,6 +107,9 @@ input
 
 The order MUST NOT be user-reorderable. An inactive effect MUST be an exact bypass.
 
+Under [RGB Multiple Exposure](../multiple-exposure/spec.md#rgb-multiple-exposure), Diffusion and RGB Halation MUST run per exposure before composition.
+The LUT, LUT Grade, output gamut, output encoding, and Grain MUST run once after composition.
+
 ## Effects
 
 The runtime root is `effects`. Its `diffusion`, `halation`, and `grain` groups are optional and each carries `active` plus its declared controls.

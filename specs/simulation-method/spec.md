@@ -60,7 +60,7 @@ The table declares each capability's track. The owning specification states its 
 | Diffusion | shared | [Film chain](../film-chain/spec.md) / [LUT transform](../lut-transform/spec.md#diffusion) | One optical response at the camera, enlarger, and pre-LUT placements. |
 | Grain | dual-track | [Film grain](../film-grain/spec.md) | Film material and post-scan engines use different inputs and parameters from Effects Grain. |
 | Tone and color | shared | [Finishing](../finishing/spec.md) | One response at Scan Tone & Color and LUT Grade. |
-| Multiple exposure | single-track | [Film chain](../film-chain/spec.md#multiple-exposure) | RGB has no record exposure, development, or density curve to compose. |
+| Multiple exposure | dual-track | [Multiple exposure](../multiple-exposure/spec.md) | Film sums record exposure before development; RGB sums per-shot linear light before the LUT transform. |
 | Camera light leak | single-track | [Film chain](../film-chain/spec.md#camera-light-leak) | RGB has no film record exposure; a synthetic leak would be a separate effect. |
 | Print viewing glare | single-track | [Film chain](../film-chain/spec.md#scan-optics-and-print-viewing-glare) | RGB has no print readout light. |
 | Scanner lens blur | single-track | [Film chain](../film-chain/spec.md#scan-optics-and-print-viewing-glare) | RGB has no optical scan acquisition. |

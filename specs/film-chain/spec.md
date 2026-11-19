@@ -190,31 +190,8 @@ Camera light leak is single-track under [Simulation methods](../simulation-metho
 
 ## Multiple exposure
 
-Multiple exposure composes two or more photographs on one film before development. [Simulation methods](../simulation-method/spec.md#declared-tracks) declares it single-track.
-
-- A stack MUST contain two or more exposures.
-- Each exposure MUST pass source interpretation, metering, camera conversion, and the camera-side film exposure operations.
-- The camera-side film exposure operations include camera diffusion, lens blur, camera light leak, and Film Halation.
-- Every exposure MUST share the selected film, route, source interpretation, working geometry, and working pitch.
-- A per-exposure crop, resize, rotation, or other transform is outside this capability.
-- Each exposure MUST declare one finite exposure offset in stops, within the declared control domain.
-- The offset MUST apply after metering and before the camera-side optical operations.
-- Composition MUST add record exposure before the density curve. It MUST NOT add density.
-- The density curve, DIR couplers, and material grain MUST run once after the last exposure.
-- The selected downstream print and scan operations MUST run once after composition.
-- The stack MUST preserve floating headroom until the ordinary chain boundary.
-- The stack MUST accept only a film-forming image-entry route.
-- A completed material state MUST NOT be a stack input or output.
-- The stack MUST be deterministic for the same sources, offsets, controls, seed, and backend.
-- CPU and GPU MUST use the same accumulation and development semantics.
-
-| Metering policy | Behavior |
-| --- | --- |
-| `each` | Meter each exposure on its own input. |
-| `lock-to-first` | Meter the first exposure and reuse its decision for the stack. |
-| `manual` | Apply the declared offsets without automatic metering. |
-
-A nonzero global camera exposure compensation MUST fail. The per-exposure offsets own the exposure decision.
+Multiple exposure is a capture capability under [Multiple exposure](../multiple-exposure/spec.md).
+The film chain supplies record exposure and the camera-side operations listed there.
 
 ## Optical-order cutover
 
