@@ -106,9 +106,6 @@ _Avoid_: Look halation, LUT halation, image halation
 **Halation kernel**: The shared spatial point-spread response used by Film Halation and RGB Halation. It is not a render mode, input, or effect model.
 _Avoid_: Halation mode
 
-**Effect order**: The position of an RGB film effect relative to the LUT: before the look or after the look. It is a parameter, not an effect model.
-_Avoid_: Pre-look halation, post-look halation
-
 **Effect track**: The declared relationship between an effect capability and the two simulation methods: shared, dual-track, or single-track.
 _Avoid_: Effect mode, effect route
 

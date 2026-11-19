@@ -4,9 +4,9 @@
 
 | Capability | Owns |
 | --- | --- |
-| This capability | The Film Halation and RGB Halation schemes; the shared spatial response; effect-order language. |
+| This capability | The Film Halation and RGB Halation schemes; the shared spatial response. |
 | [Film chain](../film-chain/spec.md) | Film Halation stage placement, film source response, and parameter storage. |
-| [LUT transform](../lut-transform/spec.md) | RGB Halation stage placement, effect-order control, and parameter storage. |
+| [LUT transform](../lut-transform/spec.md) | RGB Halation stage placement and parameter storage. |
 | [Render modes](../render-mode/spec.md) | Mode activation. |
 | [GUI workflow](../gui-workflow/spec.md) | Control inventory and stage ownership. |
 | [Presets](../presets/spec.md) | Preset ownership and capture. |
@@ -30,7 +30,6 @@ Given the declared reference fixture and each model's calibrated parameters, the
 Visual equivalence is evaluated after the display transform on the halo difference between halation on and off.
 It is defined for the RGB before-LUT position.
 
-The after-LUT position is a separate appearance and carries no equivalence claim.
 Pixel equality, spectral equality, and density equality are outside the target and MUST NOT be claimed.
 
 Film Halation is the visual reference.
@@ -93,13 +92,11 @@ RGB Halation reads the RGB Input.
 - Above the low threshold and below the high protection range, the added halation MUST increase with source level.
 - The effect MUST add only the positive difference between the spatial response and the mask.
 - The effect MUST NOT darken the RGB Input.
-- RGB Halation MAY run before or after the LUT.
-- The effect order MUST be explicit.
-- The default order MUST be before the LUT.
+- RGB Halation runs before the LUT.
 
 ### Parameters
 
-RGB Halation owns mask low, high, transition, per-channel spatial response and strength, bounce count, bounce decay, and effect order.
+RGB Halation owns mask low, high, transition, per-channel spatial response and strength, bounce count, and bounce decay.
 
 [LUT transform](../lut-transform/spec.md#rgb-halation) owns the parameter names, storage, and stage placement.
 

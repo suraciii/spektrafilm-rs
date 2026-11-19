@@ -231,9 +231,7 @@ The Grain module MUST NOT be presented as a global effects module or shared with
 
 The Film stage's halation control is Film Halation; the Effects stage's halation control is RGB Halation.
 
-RGB Halation MUST expose mask low, high, transition, spatial response, per-channel strength, and effect order under `effects.halation`.
-
-Its effect-order control MUST use `Before look` or `After look`.
+RGB Halation MUST expose mask low, high, transition, spatial response, and per-channel strength under `effects.halation`.
 
 Each editable RGB component MUST remain available.
 

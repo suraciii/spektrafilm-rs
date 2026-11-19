@@ -15,7 +15,7 @@ Halation kernel
     ├── input: RGB Input
     ├── maximum-channel highlight mask
     ├── positive-difference add
-    ├── effect order: before or after LUT
+    ├── stage: before LUT
     └── output: modified RGB Input
 ```
 
@@ -138,7 +138,7 @@ The model MUST NOT use luminance alone as the mask source.
 
 The model MUST NOT read film density, film exposure, or a film profile.
 
-The effect order is a model parameter, not a model variant.
+The RGB model runs before the LUT.
 
 The [LUT transform](../lut-transform/spec.md#rgb-halation) owns the parameter names, storage, and stage placement.
 
@@ -154,7 +154,7 @@ Grain, diffusion, light leak, and LUT-grade changes are inactive.
 
 Visual equivalence means the two halos have the same spatial extent, the same hue direction, and no perceptible difference in peak or integrated amplitude at the reference viewing size.
 The reference viewing size is the fixture at 100% display scale.
-The target applies to the before-LUT RGB position; the after-LUT position is a separate appearance.
+The target applies to the before-LUT RGB position.
 
 The RGB model matches the reference by calibrating its mask thresholds and per-channel strengths.
 The calibration MUST use the declared reference fixture.
@@ -197,7 +197,7 @@ The RGB model MUST NOT claim them.
 2. One spatial response serves both schemes.
 3. Film and RGB parameters do not cross.
 4. The RGB mask preserves hue and per-channel amplitude.
-5. Effect order is a parameter, not a scheme.
+5. RGB Halation runs before the LUT.
 6. Inactive scheme values are retained and unread.
 7. The kernel returns a halo layer without strength, scatter, compression, or renormalization.
 8. A zero first sigma is a near-delta response; when every first sigma is zero, the response is inactive and no renormalization runs.

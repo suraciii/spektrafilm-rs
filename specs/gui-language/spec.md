@@ -70,7 +70,6 @@ The Simplified Chinese presentation MUST use these core terms consistently. The 
 | Simulation method / Spectral / RGB | 模拟方法 / 光谱 / RGB |
 | RGB workflow / LUT / Effects | RGB 工作流 / LUT / 效果 |
 | Film Halation / RGB Halation | 胶片光晕 / RGB 光晕 |
-| Effect order / Before look / After look | 效果顺序 / Look 前 / Look 后 |
 | Effects | 效果 |
 | Tone & Color / Range | 影调与色彩 / 范围 |
 | Brightness / Contrast | 明暗 / 反差 |
@@ -97,9 +96,6 @@ The Effects-stage halation control MUST be `RGB Halation`.
 
 The interface MUST NOT present `Appearance`, `Non Spectral`, `Non-Spectral`, or `Color Transform` as a method name.
 
-An effect-order control MUST use `Before look` and `After look`; it MUST NOT create a second halation model.
-
-`Look` in these labels means the 3D LUT transform, not LUT Grade.
 Diffusion bloom and Halation MUST remain separate controls and labels.
 
 ### Search and text entry

@@ -70,16 +70,15 @@ The LUT file is external to the product. The product MUST NOT silently substitut
 
 ## Color order
 
-LUT mode MUST use one fixed evaluation order with an explicit RGB Halation position:
+LUT mode MUST use one fixed evaluation order:
 
 ```text
 input
   → linear working RGB
   → diffusion
-  → [RGB Halation when its effect order is before the LUT]
+  → RGB Halation
   → shaper / LUT input transform
   → 3D LUT
-  → [RGB Halation when its effect order is after the LUT]
   → LUT Grade
   → output gamut
   → output encoding
@@ -100,8 +99,7 @@ input
 
 - Diffusion MUST evaluate in linear light before RGB Halation.
 - RGB Halation MUST evaluate in linear light.
-- RGB Halation MUST run at exactly one declared position: before the LUT or after the LUT.
-- The default position follows [Halation models](../halation/spec.md#rgb-halation).
+- RGB Halation MUST run before the LUT.
 - The LUT MUST remain pointwise.
 - LUT Grade MUST follow the LUT.
 - Output gamut MUST follow the LUT or LUT Grade.
@@ -121,15 +119,15 @@ An effect MUST NOT be encoded in the LUT. A 3D LUT is pointwise and cannot carry
 
 ### RGB Halation
 
-RGB Halation runs at its declared effect order under [Halation models](../halation/spec.md#rgb-halation).
+RGB Halation runs before the LUT under [Halation models](../halation/spec.md#rgb-halation).
 
 It MUST evaluate in linear light.
 
 It MUST NOT read film density, film exposure, or a film profile.
 
-The LUT stage owns the effect-order control and the stage placement.
+The LUT stage owns the stage placement.
 
-The effect parameter group MUST expose mask low, high, transition, per-channel spatial response and strength, bounce count, bounce decay, and effect order.
+The effect parameter group MUST expose mask low, high, transition, per-channel spatial response and strength, bounce count, and bounce decay.
 
 - The spatial response MUST use the fixed 35 mm reference frame under [Halation models](../halation/spec.md#spatial-response).
 - The stored camera film format MUST NOT change the RGB spatial scale.
@@ -217,6 +215,6 @@ A failed LUT import or render MUST preserve the preceding accepted image and par
 ## Acceptance
 
 1. LUT mode applies a declared external LUT without loading film or print profiles; Off mode applies the same effects without a LUT or LUT Grade; mode switching preserves inactive values.
-2. Diffusion, RGB Halation, LUT Grade, and Grain remain independently toggleable; RGB Halation runs at its declared position before or after the LUT; LUT strength zero bypasses the LUT color transform and no spatial effect is encoded in the LUT.
+2. Diffusion, RGB Halation, LUT Grade, and Grain remain independently toggleable; RGB Halation runs before the LUT; LUT strength zero bypasses the LUT color transform and no spatial effect is encoded in the LUT.
 3. Missing or ambiguous color-space, domain, domain policy, shaper, file, or hash declarations fail before output without silent substitution, clipping, or fallback.
 4. A clamp render outside the declared domain clips only at the domain edge and reports the clipped fraction; fail stops the render instead. The LUT stage shows the full clipped warning and every domain axis.

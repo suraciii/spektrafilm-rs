@@ -61,19 +61,18 @@ LUT mode MUST evaluate in this order:
 ```text
 1. Decode input and convert to linear working RGB.
 2. Diffusion in linear light.
-3. RGB Halation when its effect order is before the LUT.
+3. RGB Halation in linear light.
 4. Shaper and LUT input transform.
 5. 3D LUT.
-6. RGB Halation when its effect order is after the LUT.
-7. Decode LUT output to linear output RGB.
-8. Optional LUT Grade.
-9. Existing output gamut processing.
-10. Output encoding.
-11. Grain in output encoding.
-12. Publish output.
+6. Decode LUT output to linear output RGB.
+7. Optional LUT Grade.
+8. Existing output gamut processing.
+9. Output encoding.
+10. Grain in output encoding.
+11. Publish output.
 ```
 
-Off mode MUST use the same order with steps 4 through 8 as exact bypasses:
+Off mode MUST use the same order with steps 4 through 7 as exact bypasses:
 
 ```text
 1. Decode input and convert to linear working RGB.
@@ -85,11 +84,11 @@ Off mode MUST use the same order with steps 4 through 8 as exact bypasses:
 7. Publish output.
 ```
 
-RGB Halation MUST run at exactly one declared position: before the LUT or after the LUT. The default follows [Halation models](../halation/spec.md#rgb-halation).
+RGB Halation MUST run before the LUT.
 
 Diffusion models lens scatter; RGB Halation models a highlight-scatter appearance. Diffusion therefore precedes RGB Halation.
 
-RGB Halation sees linear light. Its position determines whether it sees pre-LUT or post-LUT linear values. Grain sees final output encoding, so it is independent of LUT contrast.
+RGB Halation sees linear light before the LUT. Grain sees final output encoding, so it is independent of LUT contrast.
 
 ## LUT stage
 
@@ -167,7 +166,7 @@ pub enum EffectPlacement {
 | Effect | Placement | Working domain | Shared implementation | Independent semantics |
 | --- | --- | --- | --- | --- |
 | Diffusion | PreLut | Linear scene RGB | Camera diffusion PSF/models | No film or print stage |
-| RGB Halation | PreLut or PostLut | Linear scene or LUT-output RGB | Shared PSF primitive | RGB model; no film density |
+| RGB Halation | PreLut | Linear scene RGB | Shared PSF primitive | RGB model; no film density |
 | LUT Grade | PostLut | Linear output RGB / Oklab | `finishing` | Optional, LUT-independent |
 | Grain | OutputEncoding | Encoded output RGB | Noise/hash primitive | Appearance grain, no film density or RMS |
 
@@ -183,26 +182,15 @@ The RGB model is calibrated against the Film reference fixture.
 Calibration adjusts mask thresholds and per-channel strengths until halo extent, amplitude, and hue match.
 The result stays in `LutHalationParams`; it does not create a film-density dependency.
 
-The LUT transform owns its stage placement and effect-order control.
+The LUT transform owns its stage placement.
 
 The effect parameter group is `LutHalationParams`.
 
 `LutHalationParams` is the wire type for RGB Halation; the domain term is RGB Halation.
 
-The canonical effect-order values are `before_lut` and `after_lut`. The default is `before_lut`.
-
-`before_lut` is the position for the Film visual-equivalence target.
-`after_lut` is a separate appearance and carries no equivalence claim.
-
 ```rust
-pub enum HalationEffectOrder {
-    BeforeLut,
-    AfterLut,
-}
-
 pub struct LutHalationParams {
     pub active: bool,
-    pub effect_order: HalationEffectOrder,
     pub mask_low: f64,
     pub mask_high: f64,
     pub mask_transition: f64,
@@ -320,7 +308,7 @@ A rejected update MUST preserve the preceding accepted parameters, image, and ou
 
 ## Execution
 
-CPU and GPU MUST evaluate the same LUT declaration, interpolation, effect order, and effect model. A backend MUST NOT substitute a different color transform or skip a spatial effect.
+CPU and GPU MUST evaluate the same LUT declaration, interpolation, and effect model. A backend MUST NOT substitute a different color transform or skip a spatial effect.
 
 The LUT lookup and grain field MUST be deterministic for the same input, declaration, parameters, seed, precision, and backend.
 
