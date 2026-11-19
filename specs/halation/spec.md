@@ -64,7 +64,7 @@ A saturated blue source MUST produce a blue halation.
 
 The mask MUST preserve source hue.
 
-Above the low threshold, the added halation MUST increase with source level.
+Above the low threshold and below the high protection range, the added halation MUST increase with source level.
 
 The effect MUST add only the positive difference between the spatial response and the mask.
 
@@ -101,5 +101,5 @@ An inactive model MUST retain its stored values and MUST NOT be read or validate
 ## Acceptance
 
 1. Film mode executes Film Halation; LUT and Off execute RGB Halation; a chained workflow executes both in stage order.
-2. RGB Halation preserves red and blue source hue and increases with source level above the low threshold.
+2. RGB Halation preserves red and blue source hue and increases with source level above the low threshold and below the high protection range.
 3. Film and RGB halation parameters remain independent; neither model reads the other model's fields.

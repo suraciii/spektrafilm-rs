@@ -126,7 +126,7 @@ The effect MUST add only the positive difference between the spatial response an
 
 The effect order MUST be before the LUT or after the LUT. The default order MUST be before the LUT.
 
-A saturated red source MUST produce a red halation. A saturated blue source MUST produce a blue halation. Above the low threshold, the added halation MUST increase with source level.
+A saturated red source MUST produce a red halation. A saturated blue source MUST produce a blue halation. Above the low threshold and below the high protection range, the added halation MUST increase with source level.
 
 
 ### Diffusion
