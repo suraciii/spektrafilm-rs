@@ -67,7 +67,10 @@ developer_exhaustion = 0.0
 
 [parameters.film_render.grain]
 active = true
-engine = "spektra"
+engine = "dye"
+dye_size = 1.3
+dye_strength = 1.2
+dye_color_grain = 0.35
 procedural_profile = "35mm250"
 procedural_film_type = "negative"
 procedural_mode = "analogue"
