@@ -38,6 +38,7 @@ The command MUST accept these forms:
 spektrafilm process INPUT --output OUTPUT --film STOCK [--paper STOCK] [--params FILE] [OPTIONS]
 spektrafilm process INPUT --output OUTPUT --preset SELECTOR [OPTIONS]
 spektrafilm process ARTIFACT --route ROUTE --output OUTPUT [OPTIONS]
+spektrafilm process --expose PATH --expose PATH --output OUTPUT --film STOCK [OPTIONS]
 
 OPTIONS may include:
   --preset SELECTOR     repeatable; presets apply in appearance order
@@ -53,6 +54,33 @@ OPTIONS may include:
 ```
 
 Existing backend, route, RAW, output, and data-directory options MUST remain available.
+
+### Multiple exposure
+
+A multiple-exposure render MUST select an exposure stack instead of one positional input.
+
+| Option | Requirement |
+| --- | --- |
+| `--expose PATH` | Adds one exposure; repeat for the stack. |
+| `--expose-ev EV` | Supplies one finite offset per exposure; one value per `--expose`. |
+| `--multiple-exposure-meter` | Accepts `each`, `lock-to-first`, or `manual`; defaults to `manual`. |
+| `--output-crop X,Y,W,H` | Crops the rendered output; it MUST NOT crop an input. |
+| `--recipe FILE` | Loads one resolved stack recipe. |
+| `--recipe-out FILE` | Writes the resolved stack recipe. |
+| `--preview` | Renders the same composite at a reduced long edge. |
+| `--preview-max-size` | Sets the preview long edge. |
+| `--max-memory` | Bounds host memory before the first exposure. |
+
+- A stack MUST contain two to eight exposures.
+- A stack MUST NOT combine with a positional input or a stage artifact input.
+- A stack MUST NOT combine `--expose` with `--recipe`.
+- A stack MUST use the default `input > film > print > scan` route; route, scan-film, and scan-output selection are outside this command.
+- Every exposure MUST share the final working geometry.
+- A stack MUST NOT accept camera RAW, lens correction, a channel swap, LUT mode, or a scan profile.
+- A stack MUST NOT accept a per-exposure transform.
+- A stack MUST NOT combine with a preset, `--params`, `--feature-profile`, or `--set`.
+- A recipe MUST carry the film selection and its print reference, source interpretation, seed, metering policy, output crop, and per-exposure offsets.
+- A failed memory check MUST publish no output.
 
 ### Preset selector
 

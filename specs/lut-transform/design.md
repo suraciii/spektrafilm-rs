@@ -183,6 +183,33 @@ The effect parameter group is `LutHalationParams`.
 
 `LutHalationParams` is the wire type for RGB Halation; the domain term is RGB Halation.
 
+The canonical effect-order values are `before_lut` and `after_lut`. The default is `before_lut`.
+
+```rust
+pub enum HalationEffectOrder {
+    BeforeLut,
+    AfterLut,
+}
+
+pub struct LutHalationParams {
+    pub active: bool,
+    pub effect_order: HalationEffectOrder,
+    pub mask_low: f64,
+    pub mask_high: f64,
+    pub mask_transition: f64,
+    pub sigma_um: [f64; 3],
+    pub strength: [f64; 3],
+    pub n_bounces: u32,
+    pub bounce_decay: f64,
+}
+```
+
+Mask thresholds and transition are linear-light values. The sigma values are micrometres on the fixed 35 mm reference frame.
+
+The type MUST NOT carry film source-response, scatter, compression, or renormalization fields.
+
+Active RGB Halation MUST reject nonfinite values, `mask_low` outside `[0, 1)`, `mask_high` not above `mask_low`, a nonpositive `mask_transition`, a negative sigma, a zero bounce count, and decay outside `(0, 1]`.
+
 ### Diffusion
 
 Diffusion MUST reuse the existing optical PSF implementations. It MUST carry its own model selection and MUST NOT read a film profile or camera-diffusion control. It MUST run before the LUT.

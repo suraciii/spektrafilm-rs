@@ -126,7 +126,11 @@ It MUST NOT read film density, film exposure, or a film profile.
 
 The LUT stage owns the effect-order control and the stage placement.
 
-The effect parameter group MUST expose mask low, high, transition, spatial response, per-channel strength, and effect order.
+The effect parameter group MUST expose mask low, high, transition, per-channel spatial response and strength, bounce count, bounce decay, and effect order.
+
+- The spatial response MUST use the fixed 35 mm reference frame under [Halation models](../halation/spec.md#spatial-response).
+- The stored camera film format MUST NOT change the RGB spatial scale.
+- The parameter group MUST NOT expose film source-response, scatter, compression, or renormalization fields.
 
 ### Diffusion
 
@@ -197,6 +201,8 @@ A failed LUT import or render MUST preserve the preceding accepted image and par
 
 - Physical film simulation, spectral sensitivity, metamerism, dye density, or illuminant adaptation.
 - Scene atmosphere, fog, motion blur, temporal integration, or volumetric scene glow.
+- Multiple-exposure compositing of separate frames.
+- Camera light-leak simulation.
 - Local masks, subject detection, or content-aware adjustments.
 - Adobe XMP or DCP import.
 - Converting a film profile into a LUT transform.

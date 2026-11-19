@@ -172,6 +172,8 @@ Closing a dialog MUST return focus to its invoking control. Labels and state cue
 
 This specification does not introduce new film algorithms, artistic macro parameters, parameter aliases, basic/expert modes, a second preset library, media cataloging, or a new GUI framework. It does not restore retired output-lightness or draft digital-response controls. Preset thumbnails and multi-photograph work follow the owners in the [capability map](#capability-map).
 
+A multiple-exposure inspector is outside this specification. The [CLI multiple-exposure workflow](../cli/spec.md#multiple-exposure) remains that capability's product surface.
+
 The HTML design reference is not an engine implementation. Its sample values, parameter count, browser storage, image assets, and disabled engine actions are not native product contracts. Native acceptance MUST use actual source images, production controls, and real render and writer operations.
 
 ## Acceptance

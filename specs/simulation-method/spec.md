@@ -49,6 +49,24 @@ RGB does not name the output format; a Spectral simulation also outputs RGB.
 - A capability MUST NOT claim dual-track status by renaming one shared model.
 - [Halation models](../halation/spec.md) is the reference dual-track contract.
 
+## Declared tracks
+
+The table declares each capability's track. The owning specification states its behavior.
+
+| Capability | Track | Owner | Relationship |
+| --- | --- | --- | --- |
+| Halation | dual-track | [Halation models](../halation/spec.md) | Separate Film and RGB schemes over one spatial response. |
+| Diffusion | shared | [Film chain](../film-chain/spec.md) / [LUT transform](../lut-transform/spec.md#diffusion) | One optical response at the camera, enlarger, and pre-LUT placements. |
+| Grain | dual-track | [Film grain](../film-grain/spec.md) | Film material and post-scan engines use different inputs and parameters from Effects Grain. |
+| Tone and color | shared | [Finishing](../finishing/spec.md) | One response at Scan Tone & Color and LUT Grade. |
+| Multiple exposure | single-track | [Film chain](../film-chain/spec.md#multiple-exposure) | RGB has no record exposure, development, or density curve to compose. |
+| Camera light leak | single-track | [Film chain](../film-chain/spec.md#camera-light-leak) | RGB has no film record exposure; a synthetic leak would be a separate effect. |
+| Print viewing glare | single-track | [Film chain](../film-chain/spec.md#scan-optics-and-print-viewing-glare) | RGB has no print readout light. |
+| Scanner lens blur | single-track | [Film chain](../film-chain/spec.md#scan-optics-and-print-viewing-glare) | RGB has no optical scan acquisition. |
+| Unsharp mask | single-track | [Film chain](../film-chain/spec.md#scan-optics-and-print-viewing-glare) | RGB has no scan sharpening stage; generic sharpening would be a separate effect. |
+
+Output gamut is one shared output transform. Film material, print, scan, CMYK, and camera metering are single-track by design; their owning specifications state activation.
+
 ## Presentation
 
 Visible labels follow [GUI language](../gui-language/spec.md#simulation-method-and-halation-labels).

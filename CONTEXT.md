@@ -12,6 +12,9 @@ _Avoid_: Receiver capture, record density
 **Camera light leak**: Stray light that reaches a film record during exposure through a seal gap, a door hinge, or a failed light trap. It is an addition to record exposure, so development, in-emulsion scatter, and scanning treat it like image-forming light.
 _Avoid_: Light-leak overlay, encoded-domain leak
 
+**Multiple exposure**: The composition of two or more exposures on one film record before development. It is a Film-chain operation, not an RGB effect.
+_Avoid_: Double exposure, exposure stack
+
 **Record density**: The optical density formed in one developed record of a film or a photographic paper. It describes the developed material, before a scan interprets it.
 _Avoid_: Scanned density, scan capture
 

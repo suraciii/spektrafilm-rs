@@ -122,7 +122,10 @@ The [LUT transform](../lut-transform/spec.md#rgb-halation) owns the parameter na
 - A shared `HalationParams` MUST NOT carry fields for both schemes.
 - `boost_ev`, `boost_range`, and `protect_ev` belong to Film Halation highlight reconstruction.
 - `mask_low`, `mask_high`, and `mask_transition` belong to RGB Halation.
-- Film sigma and RGB sigma MUST convert through their own input pitch or reference scale.
+- Film sigma and spatial lengths MUST convert through the working film pitch.
+- RGB sigma and spatial lengths MUST convert through the fixed 35 mm reference pitch.
+- The RGB reference pitch MUST derive from the full working long edge before crop.
+- The stored camera film format MUST NOT change the RGB reference pitch.
 
 ## Invariants
 

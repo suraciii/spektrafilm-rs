@@ -81,9 +81,17 @@ RGB Halation reads the RGB Input.
 
 ### Parameters
 
-RGB Halation owns mask low, high, transition, RGB spatial response, per-channel strength, and effect order.
+RGB Halation owns mask low, high, transition, per-channel spatial response and strength, bounce count, bounce decay, and effect order.
 
 [LUT transform](../lut-transform/spec.md#rgb-halation) owns the parameter names, storage, and stage placement.
+
+### Spatial response
+
+Film Halation sigma and spatial lengths are film-plane micrometres. They convert through the working film pitch.
+
+RGB Halation sigma and spatial lengths are micrometres on a fixed 35 mm reference frame. They convert through a reference pitch derived from the full working image's long edge before crop.
+
+The stored camera film format and source metadata MUST NOT change the RGB reference pitch.
 
 ### Constraints
 
