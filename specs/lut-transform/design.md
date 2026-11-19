@@ -208,7 +208,7 @@ Mask thresholds and transition are linear-light values. The sigma values are mic
 
 The type MUST NOT carry film source-response, scatter, compression, or renormalization fields.
 
-Active RGB Halation MUST reject nonfinite values, `mask_low` outside `[0, 1)`, `mask_high` not above `mask_low`, a nonpositive `mask_transition`, a negative sigma, a zero bounce count, and decay outside `(0, 1]`.
+Active RGB Halation MUST reject nonfinite values, `mask_low` outside `[0, 1)`, `mask_high` not above `mask_low`, a nonpositive `mask_transition`, a negative sigma or strength, a zero bounce count, and decay outside `[0, 1]`.
 
 ### Diffusion
 

@@ -23,11 +23,24 @@ Halation kernel
 
 The shared kernel owns the spatial response.
 
-The response is a multi-bounce Gaussian sum with per-channel sigma, bounce count, and decay.
+The response is a multi-bounce Gaussian sum with per-channel sigma, bounce count, and decay:
 
-Each model supplies its own per-channel strength.
+\[
+L_c = \sum_{k=1}^{K} w_k\,G_{\sigma_c\sqrt{k}} * S_c, \qquad
+w_k = \frac{\rho^{k-1}}{\sum_{j=1}^{K}\rho^{j-1}}.
+\]
 
-The kernel MUST NOT own input masks, output composition, strength, or parameter names.
+Here `S_c` is the model-prepared source, `sigma_c` is the first sigma, `K` is the bounce count, and `rho` is the decay.
+
+The kernel returns `L_c` and MUST NOT add the result to its input.
+
+The kernel MUST NOT own input masks, strength, scatter, source compression, renormalization, or parameter names.
+
+Each model supplies its own source and output composition.
+
+The kernel MUST use a positive pitch and MUST NOT clamp it to a fixed minimum.
+
+A channel with zero sigma MUST produce no halo and MUST NOT enter renormalization.
 
 ## Film Halation model
 
@@ -42,6 +55,21 @@ It adds the response to the Film Input.
 It MAY renormalize per channel.
 
 Its parameters are film-plane values.
+
+| Value | Effective value |
+| --- | --- |
+| Halation amplitude | `halation_strength[c] * halation_amount` |
+| First sigma | `halation_first_sigma_um[c] * halation_spatial_scale` |
+| Scatter core sigma | `scatter_core_um[c] * scatter_spatial_scale` |
+| Scatter tail decay | `scatter_tail_um[c] * scatter_spatial_scale` |
+
+The scatter mixture MUST preserve energy: `(1 - scatter_amount) * I + scatter_amount * ((1 - tail_weight) * G_core + tail_weight * E_tail)`.
+
+The film model MUST clamp the halo source to nonnegative values.
+
+Renormalization MUST divide each active channel by one plus its effective halation amplitude. A zero-sigma channel MUST NOT be renormalized.
+
+Active Film Halation MUST reject nonfinite values, `scatter_amount` outside `[0, 1]`, `scatter_tail_weight` outside `[0, 1]`, negative widths, scales, amounts, or strengths, a zero bounce count, and `halation_bounce_decay` outside `[0, 1]`.
 
 The [Film chain](../film-chain/spec.md#film-halation-source-response) owns the parameter names, units, and source-response behavior.
 
@@ -77,7 +105,9 @@ The halo is:
 H_c = s_c\,(G_\sigma * m_c),
 \]
 
-where `s_c` is the per-channel strength.
+where `s_c` is the per-channel strength and `G_sigma` is the shared kernel.
+
+The model MUST NOT renormalize the result.
 
 The model adds:
 
@@ -135,3 +165,5 @@ The [LUT transform](../lut-transform/spec.md#rgb-halation) owns the parameter na
 4. The RGB mask preserves hue and per-channel amplitude.
 5. Effect order is a parameter, not a scheme.
 6. Inactive scheme values are retained and unread.
+7. The kernel returns a halo layer without strength, scatter, compression, or renormalization.
+8. A zero-sigma channel produces no halo and no renormalization.
