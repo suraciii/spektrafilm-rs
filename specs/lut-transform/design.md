@@ -175,11 +175,23 @@ Effects are active in LUT and Off. LUT Grade is active only in LUT. Film mode do
 
 ### RGB Halation
 
-RGB Halation MUST build a maximum-channel highlight mask in linear light. A representative response is:
+RGB Halation MUST build a maximum-channel highlight mask in linear light.
+
+The maximum channel is:
 
 \[
-M(x)=\max(R(x),G(x),B(x)), \qquad
-g(x)=\operatorname{smoothstep}(low,low+t,M(x))\,(1-\operatorname{smoothstep}(high+t,high+2t,M(x))), \qquad
+M(x)=\max(R(x),G(x),B(x)).
+\]
+
+The gate is:
+
+\[
+g(x)=\operatorname{smoothstep}(low,low+t,M(x))\,(1-\operatorname{smoothstep}(high+t,high+2t,M(x))).
+\]
+
+The per-channel mask is:
+
+\[
 m_c(x)=g(x)\,\frac{\max(0,I_c(x)-low)}{1-low}.
 \]
 
