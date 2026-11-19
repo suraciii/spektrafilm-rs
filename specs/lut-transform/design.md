@@ -10,7 +10,7 @@ The [product contract](spec.md) owns observable LUT mode behavior. This document
 | Film-chain LUT export, bundle metadata, bake QA | [LUT delivery](../lut-delivery/spec.md) |
 | LUT import, external LUT declaration, LUT stage | This capability |
 | Exported-LUT handoff, LUT file references, LUT presets | [LUT workflow](../lut-workflow/spec.md) |
-| Halation, diffusion, and grain parameter models | This capability |
+| RGB Halation, diffusion, and grain parameter models | This capability |
 | LUT Grade response and Oklab evaluation | [Tone and color](../finishing/spec.md) |
 | Film grain engines | [Film grain](../film-grain/spec.md) |
 | CPU/GPU evaluation | [GPU execution](../gpu-execution/spec.md) |
@@ -28,7 +28,7 @@ LUT delivery exports a film-chain transform. LUT mode imports an external transf
 | External LUT parsing | One shared parser reads `.cube` data; LUT transform owns its declaration and validation |
 | LUT transform parameters | Core runtime parameters own the `lut`, `effects`, and `grade` groups |
 | Mode dispatch | The pipeline selects one Film, LUT, or Off graph; no per-stage mode flags |
-| Halation and grain | Transform effect models; shared PSF and noise primitives only |
+| RGB Halation and grain | Transform effect models; shared PSF and noise primitives only |
 | Diffusion | Shared optical PSF; placed before the LUT |
 | LUT Grade | Existing finishing response; optional post-LUT stage |
 | GUI and CLI | Adapters over the same core declaration; no private color transform |
@@ -59,34 +59,35 @@ LUT mode MUST evaluate in this order:
 ```text
 1. Decode input and convert to linear working RGB.
 2. Diffusion in linear light.
-3. Halation in linear light.
+3. RGB Halation when its effect order is before the LUT.
 4. Shaper and LUT input transform.
 5. 3D LUT.
-6. Decode LUT output to linear output RGB.
-7. Optional LUT Grade.
-8. Existing output gamut processing.
-9. Output encoding.
-10. Grain in output encoding.
-11. Publish output.
+6. RGB Halation when its effect order is after the LUT.
+7. Decode LUT output to linear output RGB.
+8. Optional LUT Grade.
+9. Existing output gamut processing.
+10. Output encoding.
+11. Grain in output encoding.
+12. Publish output.
 ```
 
-Off mode MUST use the same order with steps 4 through 7 as exact bypasses:
+Off mode MUST use the same order with steps 4 through 8 as exact bypasses:
 
 ```text
 1. Decode input and convert to linear working RGB.
 2. Diffusion in linear light.
-3. Halation in linear light.
+3. RGB Halation in linear light.
 4. Existing output gamut processing.
 5. Output encoding.
 6. Grain in output encoding.
 7. Publish output.
 ```
 
-The order is fixed. No effect reorders around the LUT.
+RGB Halation MUST run at exactly one declared position: before the LUT or after the LUT. The default follows [Halation models](../halation/spec.md#rgb-halation).
 
-Diffusion models lens scatter; halation models a highlight-scatter appearance. Diffusion therefore precedes halation.
+Diffusion models lens scatter; RGB Halation models a highlight-scatter appearance. Diffusion therefore precedes RGB Halation.
 
-Both effects see scene-linear highlights before the LUT compresses them. Grain sees final output encoding, so it is independent of LUT contrast.
+RGB Halation sees linear light. Its position determines whether it sees pre-LUT or post-LUT linear values. Grain sees final output encoding, so it is independent of LUT contrast.
 
 ## LUT stage
 
@@ -164,7 +165,7 @@ pub enum EffectPlacement {
 | Effect | Placement | Working domain | Shared implementation | Independent semantics |
 | --- | --- | --- | --- | --- |
 | Diffusion | PreLut | Linear scene RGB | Camera diffusion PSF/models | No film or print stage |
-| Halation | PreLut | Linear scene RGB | PSF primitive | Highlight mask, tint, threshold, no film density |
+| RGB Halation | PreLut or PostLut | Linear scene or LUT-output RGB | Shared PSF primitive | RGB model; no film density |
 | LUT Grade | PostLut | Linear output RGB / Oklab | `finishing` | Optional, LUT-independent |
 | Grain | OutputEncoding | Encoded output RGB | Noise/hash primitive | Appearance grain, no film density or RMS |
 
@@ -172,20 +173,15 @@ The table does not permit sharing a parameter object. Transform effects use thei
 
 Effects are active in LUT and Off. LUT Grade is active only in LUT. Film mode does not execute these groups.
 
-### Halation
+### RGB Halation
 
-Halation MUST build a highlight mask in linear light. A representative response is:
+RGB Halation follows [Halation model design](../halation/design.md#rgb-halation-model).
 
-\[
-m(x)=\operatorname{smoothstep}(t,1,L(x)), \qquad
-h(x)=a\,T\,(G_\sigma * m)(x),
-\]
+The LUT transform owns its stage placement and effect-order control.
 
-where `t` is the threshold, `L` is linear luminance, `G` is the declared spatial kernel, `a` is intensity, and `T` is a tint triplet.
+The effect parameter group is `LutHalationParams`.
 
-The implementation MUST protect the brightest source pixels from an unbounded additive wash. It MUST NOT read film exposure, record density, or a film profile.
-
-The PSF primitive MAY be shared with film halation. The mask, tint, threshold, and placement MUST remain LUT-specific.
+`LutHalationParams` is the wire type for RGB Halation; the domain term is RGB Halation.
 
 ### Diffusion
 
@@ -248,7 +244,7 @@ pub struct RuntimeParams {
 }
 ```
 
-`LutDiffusionParams`, `LutHalationParams`, and `LutGrainParams` are transform-owned and distinct from the film diffusion, `film_render.halation`, and `film_render.grain` groups. Field names MUST NOT alias film-density controls.
+`LutDiffusionParams`, `LutHalationParams`, and `LutGrainParams` are transform-owned and distinct from the film diffusion, `film_render.halation`, and `film_render.grain` groups. `LutHalationParams` is the wire type for RGB Halation. Field names MUST NOT alias film-density controls.
 
 The runtime groups are `lut`, `effects`, and `grade`. An absent `workflow.mode` resolves to `film`.
 

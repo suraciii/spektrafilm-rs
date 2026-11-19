@@ -151,9 +151,11 @@ Scanner lens blur MUST model readout optics on linear transmitted or reflected l
 
 Unsharp mask is digital scan sharpening, not lens resolution. It remains downstream of interpretation and output gamut processing. Procedural and Exposure Grain retain their separate [post-scan boundaries](../film-grain/spec.md#contract); they MUST NOT be moved into optical acquisition to make the grain engines appear equivalent.
 
-## Film halation source response
+## Film Halation source response
 
-- `film_render.halation.boost_ev`, `boost_range`, and `protect_ev` reconstruct pre-clip highlight irradiance before camera diffusion, lens blur, and halation. They are an option of the Halation feature: they run only while `halation.active` is true, and a zero boost is a normal off state that leaves `boost_range` and `protect_ev` stored but inactive.
+Film Halation operates on the Film Input under [Halation models](../halation/spec.md).
+
+- `film_render.halation.boost_ev`, `boost_range`, and `protect_ev` reconstruct pre-clip highlight irradiance before camera diffusion, lens blur, and halation. They are an option of the Film Halation feature: they run only while `halation.active` is true, and a zero boost is a normal off state that leaves `boost_range` and `protect_ev` stored but inactive.
 - `film_render.halation.source_compression` is an experimental appearance control, not a measured CineStill threshold or a replacement for film halation physics. It defaults to `0`, which preserves the existing linear halation source response.
 - A positive value applies a single per-pixel response to the post-scatter film raw only for the halation blur input. It does not modify the base film raw, film exposure, density, grain, bloom, or scanner readout.
 - The response uses the maximum nonnegative channel value at each pixel and the fixed linear film-raw anchor `1.0`. For a peak at or below the anchor, the response is `source / ((1 - compression) + compression * peak)`; for a peak above the anchor, the response is unchanged.

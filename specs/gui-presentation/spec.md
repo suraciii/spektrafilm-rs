@@ -147,7 +147,7 @@ The [presentation design](design.md#factory-projection-and-modified-state) owns 
 
 ## Stage navigation and control locators
 
-The inspector MUST present Input and capture, Film, Print, Scan, LUT, Effects, and Output as stage headings in one continuous list. A persistent Mode selector above the list offers Film, LUT, and Off and is not a stage heading.
+The inspector MUST present Input and capture, Film, Print, Scan, LUT, Effects, and Output as stage headings in one continuous list. A persistent Simulation method selector above the list offers Spectral and RGB; RGB exposes the LUT and Effects workflows. It is not a stage heading.
 
 The stage jump strip MUST look like navigation to those headings, not a mutually exclusive page selector. The interface MUST NOT present MAIN, FILM, PRINT, ADVANCED, or CONFIG tabs.
 

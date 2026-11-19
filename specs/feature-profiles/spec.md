@@ -29,7 +29,7 @@ The current catalog provides these families:
 | Family identifier | Product label | Profile scope | Availability |
 | --- | --- | --- | --- |
 | `grain.procedural` | Procedural grain profile | The named Procedural grain profile values | When Procedural controls are available; selecting it does not change `film_render.grain.engine` |
-| `halation` | Halation profile | `film_render.halation.halation_first_sigma_um` and `film_render.halation.halation_strength` | Whenever Halation controls are editable; inactive route conditions retain the values |
+| `halation` | Film Halation profile | `film_render.halation.halation_first_sigma_um` and `film_render.halation.halation_strength` | Whenever Film Halation controls are editable; inactive route conditions retain the values |
 
 There is no Dye feature-profile family in this algorithm revision. A future Dye profile requires a separate parameter scope, calibration record, and acceptance contract.
 
@@ -60,9 +60,9 @@ Selecting `custom` preserves current resolved Procedural values and exposes them
 
 The catalog values are SpektraFilm values. They do not claim pixel parity with an external product. The algorithm and post-scan boundary remain those defined by [Procedural grain](../film-grain/procedural/spec.md).
 
-### Halation profile family
+### Film Halation profile family
 
-The Halation family exposes existing stock-class baseline pairs as named feature profiles. Names describe material-use and antihalation categories. They do not identify a film stock or claim measured stock calibration.
+The Film Halation family exposes existing stock-class baseline pairs as named feature profiles. Names describe material-use and antihalation categories. They do not identify a film stock or claim measured stock calibration.
 
 | Name | Display label | `halation_first_sigma_um` | `halation_strength` |
 | --- | --- | --- | --- |
@@ -73,9 +73,9 @@ The Halation family exposes existing stock-class baseline pairs as named feature
 | `cine_weak` | Cine / weak antihalation | `[50, 50, 50]` | `[0.08, 0.02, 0]` |
 | `cine_no` | Cine / no antihalation | `[50, 50, 50]` | `[0.30, 0.10, 0.015]` |
 
-Applying a named Halation profile MUST replace only the two arrays in the table. It MUST preserve `active`, scatter controls, source compression, boost and protection controls, bounce controls, and renormalization. A user-selected profile takes precedence over later stock-default reapplication for its explicit leaves.
+Applying a named Film Halation profile MUST replace only the two arrays in the table. It MUST preserve `active`, scatter controls, source compression, boost and protection controls, bounce controls, and renormalization. A user-selected profile takes precedence over later stock-default reapplication for its explicit leaves.
 
-The catalog exposes existing Halation parameter arrays without claiming a separate measured-width or channel-strength model. The film-chain contract owns source response semantics, and the catalog does not claim measured point-spread functions.
+The catalog exposes existing Film Halation parameter arrays without claiming a separate measured-width or channel-strength model. The film-chain contract owns source response semantics, and the catalog does not claim measured point-spread functions.
 
 `custom` is the effective name when the two scoped arrays do not equal a built-in entry. It preserves the current arrays and does not reset other controls.
 
@@ -85,7 +85,7 @@ The catalog exposes existing Halation parameter arrays without claiming a separa
 
 Each applicable feature section MUST provide one profile selector. The selector MUST list built-in entries in stable order and `custom`. It MUST NOT repeat numeric controls owned by the same section.
 
-The selector MUST show `custom` when current scoped values do not equal a built-in entry. It MUST NOT store a second persisted identity for Halation. Procedural retains its existing `procedural_profile` wire field.
+The selector MUST show `custom` when current scoped values do not equal a built-in entry. It MUST NOT store a second persisted identity for Film Halation. Procedural retains its existing `procedural_profile` wire field.
 
 Selecting an entry MUST update only its profile scope and mark the feature section as edited. The selector MUST explain inactive route or engine conditions without clearing stored values.
 
@@ -126,10 +126,10 @@ Feature-profile selection is not serialized as a new top-level or nested field. 
 1. Every built-in family and name in this document resolves to the exact scope values in its table. Dye is not part of this catalog.
 2. An unknown family or name fails before render publication and leaves active controls unchanged.
 3. Applying a profile changes only its declared scope. Tests MUST retain sentinels in out-of-scope controls, including `active`, render mode, film route, engine, and seed.
-4. A direct Halation scope edit reports `custom` and preserves existing Procedural profile behavior.
+4. A direct Film Halation scope edit reports `custom` and preserves existing Procedural profile behavior.
 5. CLI and GUI selection resolve identical values. A profile run and equivalent direct-leaf `--set` run produce identical output for the same executable, backend, seed, and input.
 6. Profile selection does not create a second preset library or add profile references or external-product fields to carriers.
-7. Existing presets, section presets, sparse parameter files, GUI state, Procedural profile values, Halation stock defaults, CPU execution, GPU execution, and inactive-value behavior remain compatible when no feature profile is selected.
+7. Existing presets, section presets, sparse parameter files, GUI state, Procedural profile values, Film Halation stock defaults, CPU execution, GPU execution, and inactive-value behavior remain compatible when no feature profile is selected.
 8. Catalog changes require an explicit product revision and MUST NOT silently reinterpret stored resolved values.
 
 ## Reference basis

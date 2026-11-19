@@ -46,7 +46,7 @@ The GUI MUST NOT present a section-preset menu, section capture, or section mana
 
 Inspector layout changes MUST NOT change serialization keys, section payloads, or the core capture scope.
 
-Feature-profile actions MUST use the shared feature resolver. They are scoped edit operations rather than new preset documents or GUI state fields. The Halation selector derives its effective named or custom state from its two scoped arrays.
+Feature-profile actions MUST use the shared feature resolver. They are scoped edit operations rather than new preset documents or GUI state fields. The Film Halation selector derives its effective named or custom state from its two scoped arrays.
 
 Procedural keeps its existing stored profile and override semantics.
 

@@ -79,6 +79,36 @@ _Avoid_: Chart group
 **Render mode**: The exclusive processing path selected from Film, LUT, or Off. It selects which stages execute; inactive stages retain stored values.
 _Avoid_: Look, color source, page
 
+**Simulation method**: The way a film simulation computes the film look: Spectral or RGB. It is derived from the active render mode, not selected independently.
+_Avoid_: Appearance, Non-Spectral, Color Transform
+
+**Spectral simulation**: A film simulation that computes the film/print color transform from spectral distributions, illuminants, and color-matching functions.
+_Avoid_: Film mode
+
+**RGB simulation**: A film simulation that computes the film look directly in RGB, including color transforms and film effects. RGB names the computation and input domain, not the output format; a spectral simulation also outputs RGB.
+_Avoid_: RGB mode, color-only simulation, LUT mode
+
+**Film Input**: The simulated linear film raw exposure inside a spectral simulation. It is not camera RAW.
+_Avoid_: Camera RAW, film density
+
+**RGB Input**: The rendered RGB image inside an RGB simulation.
+_Avoid_: Film Input, scene input
+
+**Film Halation**: Halation applied to the Film Input before development and scan.
+_Avoid_: In-simulation halation, pre-look halation
+
+**RGB Halation**: Halation applied to the RGB Input through a maximum-channel highlight mask.
+_Avoid_: Look halation, LUT halation, image halation
+
+**Halation kernel**: The shared spatial point-spread response used by Film Halation and RGB Halation. It is not a render mode, input, or effect model.
+_Avoid_: Halation mode
+
+**Effect order**: The position of an RGB film effect relative to the LUT: before the look or after the look. It is a parameter, not an effect model.
+_Avoid_: Pre-look halation, post-look halation
+
+**Effect track**: The declared relationship between an effect capability and the two simulation methods: shared, dual-track, or single-track.
+_Avoid_: Effect mode, effect route
+
 **Film route**: The spectral stage sequence inside Film mode, such as `input > film > print > scan`. It is serialized as `workflow.route` and is inactive outside Film mode.
 _Avoid_: Workflow mode, render workflow
 
@@ -112,7 +142,7 @@ _Avoid_: Film grade, baked LUT grade
 **LUT stage**: The inspector stage that owns the LUT declaration, strength, import actions, and LUT Grade. It is not a physical film-chain stage.
 _Avoid_: Film density, camera profile
 
-**Effects stage**: The inspector stage that owns Diffusion, Halation, and Grain for LUT and Off. It is not a film material stage or a render mode.
+**Effects stage**: The inspector stage that owns Diffusion, RGB Halation, and Grain for LUT and Off. It is not a film material stage or a render mode.
 _Avoid_: Global effects, film grain, LUT mode
 
 **Preset thumbnail**: A small rendering of the current photograph with a candidate preset, used to compare presets without changing accepted adjustments. It is not a reference sample or the retained Preview result.
