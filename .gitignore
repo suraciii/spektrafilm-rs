@@ -10,6 +10,10 @@ __pycache__/
 # machine-local and not shared through git.
 .beads/
 
+# Local design-tooling state (Impeccable) — machine-local skill config and
+# critique artifacts, not shared through git.
+.impeccable/
+
 # Diagnostic outputs from local runs (test renders, exports).
 # Scoped to the repo root so legitimate fixtures under data/ and tests/
 # stay tracked.
