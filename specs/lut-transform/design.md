@@ -186,6 +186,8 @@ The LUT transform owns its stage placement.
 
 The effect parameter group is `LutHalationParams`.
 
+The GUI primary controls are a derived view; `LutHalationParams` remains the stored wire type.
+
 `LutHalationParams` is the wire type for RGB Halation; the domain term is RGB Halation.
 
 ```rust
