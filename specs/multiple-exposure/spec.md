@@ -96,10 +96,7 @@ Film Multiple Exposure MUST follow the [Film chain](../film-chain/spec.md) stage
 
 ## Recipe
 
-A stack recipe MUST declare one method and only that method's group.
-A recipe MUST carry source interpretation, seed, output crop, and per-exposure offsets.
-A Film recipe MUST carry the film selection, print reference, and metering policy.
-An RGB recipe MUST carry the LUT declaration and Effects values.
+A stack recipe MUST carry the method, exposures, offsets, source interpretation, seed, output crop, and the selected method's group.
 A recipe MUST NOT carry a per-exposure transform or a preset.
 
 The [CLI](../cli/spec.md#multiple-exposure) owns the schema version and field names.

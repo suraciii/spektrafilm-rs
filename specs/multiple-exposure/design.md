@@ -58,7 +58,7 @@ A composite-then-halation order would make the halo depend on the sum instead of
 
 ## Memory and streaming
 
-The stack may stream exposures into one accumulator.
+The stack MAY stream exposures into one accumulator.
 The accumulator holds the method's composed state, not a second full frame per exposure.
 A failed memory check publishes no output.
 
