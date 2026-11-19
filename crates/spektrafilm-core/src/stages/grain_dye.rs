@@ -13,6 +13,7 @@
 //! overlapping reads agree.
 use crate::WorkflowRoute;
 
+use rayon::prelude::*;
 use spektrafilm_math::image::ImageBuf;
 use spektrafilm_math::precision::{from_f64, to_f64};
 use spektrafilm_model::grain::dye::{DyeGrainParams, ReadoutGrid, diagnostic_env, texture};
@@ -634,10 +635,10 @@ impl DyeLayerSplit {
             );
         }
         let mut out = ImageBuf::new(source.width, source.height);
-        for y in 0..height {
-            for x in 0..width {
-                let base = (y * width + x) * 3;
-                for c in 0..3 {
+        out.data.par_chunks_mut(3).enumerate().try_for_each(
+            |(pixel, out_px)| -> Result<(), String> {
+                let base = pixel * 3;
+                for (c, out_c) in out_px.iter_mut().enumerate() {
                     let target = to_f64(source.data[base + c]);
                     if !target.is_finite() {
                         return Err("film grain Dye: source density must be finite".into());
@@ -661,10 +662,11 @@ impl DyeLayerSplit {
                     } else {
                         0.0
                     };
-                    out.data[base + c] = from_f64(value);
+                    *out_c = from_f64(value);
                 }
-            }
-        }
+                Ok(())
+            },
+        )?;
         Ok(out)
     }
 }
