@@ -120,7 +120,7 @@ impl Browser {
                     .and_then(|preset| preset.effects_parameters())
                     .is_some_and(|effects| {
                         (effects.diffusion.active && "diffusion".contains(query.as_str()))
-                            || (effects.halation.active && "halation".contains(query.as_str()))
+                            || (effects.halation.active && "rgb halation".contains(query.as_str()))
                             || (effects.grain.active && "grain".contains(query.as_str()))
                     });
                 (query.is_empty()

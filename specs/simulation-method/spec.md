@@ -35,7 +35,7 @@ RGB does not name the output format; a Spectral simulation also outputs RGB.
 - Film mode is the only Spectral mode.
 - RGB uses the LUT module when active and the Effects modules independently.
 - The RGB look source is LUT or Identity.
-- LUT Grade is optional and applies only with an active LUT.
+- LUT Grade is optional and independent of the LUT table; it applies when active.
 - Method is derived from the active workflow and modules.
 - `workflow.mode` remains `film`, `lut`, or `off`; `off` means RGB with no active LUT.
 - The product MUST NOT add a fourth render mode.

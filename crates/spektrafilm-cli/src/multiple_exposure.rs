@@ -421,6 +421,8 @@ pub(crate) fn run(args: &ProcessArgs, data: &DataSelection) -> Result<()> {
 
     let route = params.workflow.route.clone();
     let scan_film = params.io.scan_film;
+    let output_color_space = params.io.output_color_space.clone();
+    let output_cctf_encoding = params.io.output_cctf_encoding;
     let photo = RuntimePhotoParams {
         film,
         print,
@@ -576,7 +578,13 @@ pub(crate) fn run(args: &ProcessArgs, data: &DataSelection) -> Result<()> {
         .output
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("multiple-exposure.output: --output is required"))?;
-    save_output(output, &rendered, args)?;
+    save_output(
+        output,
+        &rendered,
+        &output_color_space,
+        output_cctf_encoding,
+        args,
+    )?;
 
     if let Some(path) = &args.diagnostics {
         let report_json = serde_json::json!({
@@ -657,7 +665,11 @@ fn run_rgb(args: &ProcessArgs, _data: &DataSelection, resolved: &Resolved) -> Re
         .rgb
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("multiple-exposure.method: RGB group is missing"))?;
-    let look_params = LutLookParams::from_groups(&rgb.lut, Some(&rgb.effects), Some(&rgb.grade));
+    let mut effects = rgb.effects.clone();
+    if effects.grain.active {
+        effects.grain.seed = effects.grain.seed.wrapping_add(u64::from(resolved.seed));
+    }
+    let look_params = LutLookParams::from_groups(&rgb.lut, Some(&effects), Some(&rgb.grade));
     let look = if rgb.lut.path.as_os_str().is_empty() {
         LutLook::identity(look_params)
     } else {
@@ -707,6 +719,10 @@ fn run_rgb(args: &ProcessArgs, _data: &DataSelection, resolved: &Resolved) -> Re
         input_cctf_decoding: resolved.input_cctf_decoding.unwrap_or(true),
         ..IoParams::default()
     };
+    if args.preview && args.preview_max_size == 0 {
+        bail!("multiple-exposure.preview: --preview-max-size must be positive");
+    }
+    let memory_limit = parse_memory_limit(&args.max_memory)?;
     if args.dry_run {
         let backend_name = match args.backend {
             Some(crate::Backend::Gpu) => "gpu",
@@ -758,10 +774,6 @@ fn run_rgb(args: &ProcessArgs, _data: &DataSelection, resolved: &Resolved) -> Re
         Some(crate::Backend::Cpu) | None => Box::new(spektrafilm_backend::cpu_backend::CpuBackend),
     };
 
-    if args.preview && args.preview_max_size == 0 {
-        bail!("multiple-exposure.preview: --preview-max-size must be positive");
-    }
-    let memory_limit = parse_memory_limit(&args.max_memory)?;
     let mut full_dims = None;
     let mut geometry = None;
     let mut accumulator: Option<ImageBuf> = None;
@@ -898,7 +910,7 @@ fn run_rgb(args: &ProcessArgs, _data: &DataSelection, resolved: &Resolved) -> Re
         .output
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("multiple-exposure.output: --output is required"))?;
-    save_output(output, &rendered, args)?;
+    save_output(output, &rendered, output_space.name, output_encoded, args)?;
 
     if let Some(path) = &args.diagnostics {
         let report = serde_json::json!({
@@ -1025,16 +1037,16 @@ fn resolve_rgb_config(args: &ProcessArgs, base: Option<&RgbConfig>) -> Result<Rg
     params.effects = Some(config.effects.clone());
     params.grade = Some(config.grade.clone());
     for source in &args.sources {
-        let trimmed = source.trim_start();
-        if source.contains('=')
-            && !(trimmed.starts_with("effects.") || trimmed.starts_with("grade."))
-        {
-            bail!(
-                "multiple-exposure.unsupported: RGB --set accepts effects.* and grade.* only, got {source:?}"
-            );
-        }
         let edits = ParameterEdits::parse(source)
             .map_err(|error| anyhow::anyhow!("--set {source:?}: {error}"))?;
+        if let Some(path) = edits
+            .paths()
+            .find(|path| !(path.starts_with("effects.") || path.starts_with("grade.")))
+        {
+            bail!(
+                "multiple-exposure.unsupported: RGB --set accepts effects.* and grade.* only, got {path:?}"
+            );
+        }
         edits
             .apply(&mut params)
             .map_err(|error| anyhow::anyhow!("--set {source:?}: {error}"))?;
@@ -1266,7 +1278,9 @@ fn read_recipe(path: &Path) -> Result<Resolved> {
                     "multiple-exposure.recipe-schema: an RGB recipe must not carry the Film group"
                 );
             }
-            let group = recipe.rgb.unwrap_or_default();
+            let group = recipe.rgb.ok_or_else(|| {
+                anyhow::anyhow!("multiple-exposure.recipe-schema: RGB recipe has no rgb group")
+            })?;
             let mut lut = group.lut.unwrap_or_else(zero_lut);
             if !lut.path.as_os_str().is_empty() && lut.path.is_relative() {
                 lut.path = parent
@@ -1443,7 +1457,13 @@ fn select_backend(args: &ProcessArgs) -> Result<Box<dyn ComputeBackend>> {
     }
 }
 
-fn save_output(path: &Path, image: &ImageBuf, args: &ProcessArgs) -> Result<()> {
+fn save_output(
+    path: &Path,
+    image: &ImageBuf,
+    source_color_space: &str,
+    source_encoded: bool,
+    args: &ProcessArgs,
+) -> Result<()> {
     let detected = image_io::ImageFormat::detect(path)
         .with_context(|| format!("detecting output format: {}", path.display()))?;
     let format = args
@@ -1466,19 +1486,28 @@ fn save_output(path: &Path, image: &ImageBuf, args: &ProcessArgs) -> Result<()> 
         Some(bits) => BitDepth::try_from(bits).map_err(anyhow::Error::msg)?,
         None => default_depth,
     };
+    let saving_color_space = args.workflow.saving_color_space.as_deref().unwrap_or(
+        if format == image_io::ImageFormat::Exr {
+            "ACES2065-1"
+        } else {
+            "sRGB"
+        },
+    );
     let cctf_encoding = args
         .workflow
         .saving_cctf_encoding
         .unwrap_or(format != image_io::ImageFormat::Exr);
+    let converted = image_io::convert_image(
+        image,
+        source_color_space,
+        source_encoded,
+        saving_color_space,
+        cctf_encoding,
+    )
+    .map_err(anyhow::Error::msg)?;
     let options = SaveOptions {
         depth,
-        color_space: args.workflow.saving_color_space.as_deref().unwrap_or(
-            if format == image_io::ImageFormat::Exr {
-                "ACES2065-1"
-            } else {
-                "sRGB"
-            },
-        ),
+        color_space: saving_color_space,
         cctf_encoding,
         jpeg_quality: args.jpeg_quality,
         jpeg_subsampling: args.jpeg_subsampling.map(|value| match value {
@@ -1490,7 +1519,7 @@ fn save_output(path: &Path, image: &ImageBuf, args: &ProcessArgs) -> Result<()> 
             CompressionArg::None => Compression::None,
         }),
     };
-    image_io::save(path, image, options, None)
+    image_io::save(path, &converted, options, None)
         .map_err(anyhow::Error::msg)
         .with_context(|| format!("saving {}", path.display()))?;
     Ok(())
@@ -1559,7 +1588,15 @@ fn resolved_to_recipe(
             input_cctf_decoding: resolved.input_cctf_decoding,
             film: None,
             rgb: Some(RgbRecipeGroup {
-                lut: Some(rgb.lut.clone()),
+                lut: Some({
+                    let mut lut = rgb.lut.clone();
+                    if let Some(parent) = &resolved.recipe_parent
+                        && let Ok(stripped) = lut.path.strip_prefix(parent)
+                    {
+                        lut.path = stripped.to_path_buf();
+                    }
+                    lut
+                }),
                 effects: Some(rgb.effects.clone()),
                 grade: Some(rgb.grade.clone()),
             }),
