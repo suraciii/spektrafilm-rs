@@ -35,6 +35,17 @@ The kind is derived from the carried shape, never declared by a field. A documen
 
 A Film preset or section preset MUST NOT carry `lut`, `effects`, or `grade`. A LUT or Effects preset MUST NOT carry `finishing`, `output_mix`, `cmyk`, or a material or scanner group.
 
+### Look pairs
+
+A look pair declares one Film preset and one RGB preset as two renderings of the same look.
+It is a library relationship, not a preset kind or a serialized document.
+
+A paired RGB preset MUST carry RGB Halation values calibrated to its Film preset.
+A preset without a pair MUST NOT claim cross-method halation equivalence.
+
+A built-in look pair MUST share one stable pair identity across both presets.
+The method switch MAY load the paired preset; it MUST NOT silently change the Film profile or the LUT declaration.
+
 The derived kind is an internal dispatch fact. It selects the document schema, resolver, render mode, and thumbnail preparation for a preset. It MUST NOT become a separate browser category, library, or mode-type filter.
 
 Built-in film presets MUST enable the selected film profile's Hanatos2025 adaptation surface, except `Classic Neg Inspired`, which MUST disable it to preserve its authored color response. The surface coefficients belong to the film profile. The user MAY change the surface switch after applying a preset.
