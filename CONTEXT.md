@@ -76,8 +76,35 @@ _Avoid_: Chart group
 
 **Patch window**: The declared rectangular area of one grid patch used for visual inspection. It may cover the patch or a smaller central area, but it does not include an inferred correspondence to another set.
 
-**Render mode**: The exclusive processing path selected from Film, LUT, or Off. It selects which stages execute; inactive stages retain stored values.
+**Render mode**: The exclusive processing path selected from Film, LUT, or Off. Film is a spectral simulation; LUT and Off are RGB simulations. It selects which stages execute; inactive stages retain stored values.
 _Avoid_: Look, color source, page
+
+**Simulation method**: The way a film simulation computes the film look: Spectral or RGB. It is derived from the active render mode, not selected independently.
+_Avoid_: Appearance, Non-Spectral, Color Transform
+
+**Spectral simulation**: A film simulation that computes the film/print color transform from spectral distributions, illuminants, and color-matching functions.
+_Avoid_: Film mode
+
+**RGB simulation**: A film simulation that computes the film look directly in RGB, including color transforms and film effects. RGB names the computation and input domain, not the output format; a spectral simulation also outputs RGB.
+_Avoid_: RGB mode, color-only simulation, LUT mode
+
+**Film input**: The simulated linear film raw exposure inside a spectral simulation. It is not camera RAW.
+_Avoid_: Camera RAW, film density
+
+**RGB input**: The rendered RGB image inside an RGB simulation.
+_Avoid_: Film input, scene input
+
+**Film halation**: Halation applied to the film input before development and scan.
+_Avoid_: In-simulation halation, pre-look halation
+
+**RGB halation**: Halation applied to the RGB input through a maximum-channel highlight mask.
+_Avoid_: Look halation, LUT halation, image halation
+
+**Halation kernel**: The shared spatial point-spread response used by film halation and RGB halation. It is not a render mode, input, or effect model.
+_Avoid_: Halation mode
+
+**Effect order**: The position of an RGB film effect relative to the LUT: before the look or after the look. It is a parameter, not an effect model.
+_Avoid_: Pre-look halation, post-look halation
 
 **Film route**: The spectral stage sequence inside Film mode, such as `input > film > print > scan`. It is serialized as `workflow.route` and is inactive outside Film mode.
 _Avoid_: Workflow mode, render workflow

@@ -6,9 +6,9 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 ## Contract
 
 - The GUI exposes controls for input, film, print, scanner, LUT, effects, output, advanced color, and configuration.
-- The global Film / LUT / Off selector MUST follow [Render modes](../render-mode/spec.md). It is not a stage and is not part of the stage jump strip.
+- The global simulation-method selector MUST follow [Render modes](../render-mode/spec.md) and [Simulation methods](../simulation-method/spec.md). It is not a stage and is not part of the stage jump strip.
 - The LUT stage MUST follow the [LUT workflow](../lut-workflow/spec.md), and its transform controls MUST follow the [LUT transform](../lut-transform/spec.md#ui-and-cli). LUT mode retains stored film, print, and scanner controls without executing their stages.
-- The Effects stage owns Diffusion, Halation, and Grain. It is active in LUT and Off and inactive in Film.
+- The Effects stage owns Diffusion, RGB Halation, and Grain. It is active in LUT and Off and inactive in Film.
 - The header's mode summary is read-only and MAY locate the global selector. It MUST NOT provide a second mode editor.
 - The seven stage headings remain reachable in every mode. An inactive stage body and its module reset actions MUST be disabled and collapsed by default while its heading, stored values, and applicability reason remain readable.
 - The preset browser MUST include Film, LUT, and Effects presets. Applying a preset selects the mode its kind requires.
@@ -133,7 +133,7 @@ The window has three regions and one header.
 - Application settings and Export own their separate editors under [Stage and surface ownership](#stage-and-surface-ownership).
 - The preset browser occupies the left region and is collapsible. Its width and expanded state follow [the preset browser boundary](../presets/design.md#boundaries); browser interaction and state follow [Presets](../presets/spec.md#browser-interaction) and [browser state ownership](../presets/design.md#browser-state-ownership).
 - The window header spans the three regions and owns Open image, Undo, Redo, application settings, and independent image-export actions. The Film stage's **Export film simulation as .cube…** action belongs to Film.
-- It shows the accepted source, the active render mode, and the current film and print profiles in Film mode, LUT context in LUT mode, or Effects preset in Off mode as read-only context. Status ownership follows [Labels and surfaces](#labels-and-surfaces).
+- It shows the accepted source, the active simulation method and RGB workflow, and the current film and print profiles in Spectral, the LUT context in RGB LUT, or the Effects preset in RGB Effects as read-only context. Status ownership follows [Labels and surfaces](#labels-and-surfaces).
 - Scan and Save remain reachable from a persistent action area without opening an inspector module.
 
 A region is a layout slot, not a mutually exclusive page. A control belongs to exactly one surface under [Labels and surfaces](#labels-and-surfaces). A dialog MAY edit only the values assigned to it.
@@ -214,7 +214,7 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 | Print | Print material selector and its development-time family; Enlarger exposure mode, exposure, exposure tracking, M/Y shifts, and illuminant; Preflash; Enlarger diffusion; print Chemistry and independent density-curve gamma; Print base. |
 | Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; specialized negative-conversion correction, restore, copy/paste and held automatic comparison; Scan Profile selector, strength, curve editor, and held comparison; lens blur, unsharp mask; Print viewing glare; Tone & Color and its collapsible Range group. |
 | LUT | LUT file import, replace, and reveal; LUT declaration and strength; LUT Grade and its held comparison. Film, Print, and Scan stages remain stored but inactive. |
-| Effects | Diffusion; Halation; Grain. The stage is active in LUT and Off and inactive in Film. |
+| Effects | Diffusion; RGB Halation; Grain. The stage is active in LUT and Off and inactive in Film. |
 | Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style and Simulation blend, inactive in LUT and Off; retained Save color and encoding settings. |
 | Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; State and startup: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
 | Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |
@@ -223,11 +223,15 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 
 A persistent **Mode** selector sits above the stage list and offers Film, LUT, and Off. It is not a stage and MUST NOT appear in the stage jump strip.
 
-Film owns the Grain module. The Effects stage owns Diffusion, Halation, and Grain as independent transform effects.
+Film owns the Grain module. The Effects stage owns Diffusion, RGB Halation, and Grain as independent transform effects.
 
 The Grain module keeps the five-engine selector and all engine-specific controls in one location. It MUST label Spektra, Dye, and Fotufilm Film as material grain and Procedural and Exposure Grain as post-scan appearance.
 
 The Grain module MUST NOT be presented as a global effects module or shared with the Effects stage.
+
+The Film stage's Halation control is Film Halation; the Effects stage's Halation control is RGB Halation.
+
+RGB Halation MUST expose its effect order as `Before look` or `After look`.
 
 Film Halation, Camera diffusion, Enlarger diffusion, and Print viewing glare remain at their physical stage owners. They MUST NOT be combined into one Bloom or Glow module.
 
@@ -290,11 +294,11 @@ The GUI MUST expose a searchable control index that can locate each inventory en
 
 Calibration baselines, prepared values, no-op leaves, removed parameters, and internal state MUST NOT be promoted to creative controls. The inventory MUST distinguish such exclusions from supported controls that have not yet been connected. A missing editor for a supported control is a defect, not an exclusion.
 
-Halation MUST expose `active`, `scatter_amount`, `scatter_spatial_scale`, `halation_amount`, `halation_spatial_scale`, `source_compression`, `boost_ev`, `protect_ev`, `boost_range`, `scatter_core_um`, `scatter_tail_um`, `scatter_tail_weight`, `halation_strength`, `halation_first_sigma_um`, `halation_n_bounces`, `halation_bounce_decay`, and `halation_renormalize` under `film_render.halation`. Each editable RGB component MUST remain available. Its feature-profile selector follows [Feature profiles](../feature-profiles/spec.md#halation-profile-family); it MUST NOT add a persisted Halation profile identity or replace the individual controls.
+Film Halation MUST expose `active`, `scatter_amount`, `scatter_spatial_scale`, `halation_amount`, `halation_spatial_scale`, `source_compression`, `boost_ev`, `protect_ev`, `boost_range`, `scatter_core_um`, `scatter_tail_um`, `scatter_tail_weight`, `halation_strength`, `halation_first_sigma_um`, `halation_n_bounces`, `halation_bounce_decay`, and `halation_renormalize` under `film_render.halation`. Each editable RGB component MUST remain available. Its feature-profile selector follows [Feature profiles](../feature-profiles/spec.md#halation-profile-family); it MUST NOT add a persisted Halation profile identity or replace the individual controls.
 
 Light leak MUST expose `active`, `exposure_ev`, `position`, `width_mm`, `spread_mm`, `angle_deg`, `leak_spectrum`, `texture_amount`, and `texture_scale_mm` under `film_render.light_leak`. Each editable RGB component MUST remain available.
 
-`boost_ev`, `boost_range`, and `protect_ev` are the highlight-reconstruction option of Halation: they remain stored but apply only while Halation is enabled, and `boost_range` and `protect_ev` further require a nonzero boost.
+`boost_ev`, `boost_range`, and `protect_ev` are the highlight-reconstruction option of Film Halation: they remain stored but apply only while Halation is enabled, and `boost_range` and `protect_ev` further require a nonzero boost.
 
 Preflash MUST expose exactly its existing `enlarger.preflash_exposure`, `enlarger.preflash_y_filter_shift`, and `enlarger.preflash_m_filter_shift` controls. Main enlarger M/Y controls remain independent. A visual off state MUST derive from zero exposure rather than a new enable parameter.
 
@@ -316,7 +320,7 @@ An inactive optional subfeature MUST NOT mark its whole module inactive. A modul
 
 A route or material change MUST preserve inactive values except for normalizations explicitly required by the owning contract and [material defaults](../presets/spec.md#material-defaults). The header MUST report route and scanner normalizations in Film mode.
 
-A mode change MUST preserve every stored control group. In LUT mode the header reports the LUT file identity and the applied LUT preset when present. In Off mode it reports the Effects preset.
+A mode change MUST preserve every stored control group. In RGB LUT the header reports the LUT file identity and the applied LUT preset when present. In RGB Effects it reports the Effects preset.
 
 Neither mode reports a film route summary.
 

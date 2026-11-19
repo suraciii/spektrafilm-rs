@@ -10,6 +10,8 @@ A **film preset** selects film and print profiles and their visual simulation co
 
 A **section preset** carries exactly one film-preset section. Reusable combinations of controls that are already preset-owned belong in the existing film, LUT, Effects, or section preset. A preset is not a complete GUI state, an input image, a viewer state, an export configuration, a LUT pixel payload, a calibration profile, or an arbitrary film route.
 
+A film preset is a **Spectral** preset. A LUT preset is an **RGB LUT** preset. An Effects preset is an **RGB Effects** preset. A section preset remains Spectral-only. [Simulation methods](../simulation-method/spec.md) owns the method mapping.
+
 A preset is either **built-in** or **user-owned**.
 
 A preset document is a **film preset**, a **LUT preset**, an **Effects preset**, or a **section preset**. A film preset carries both profile references and every required preset-owned group. Its optional camera group follows the [file format rules](#file-formats).

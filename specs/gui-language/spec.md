@@ -67,7 +67,10 @@ The Simplified Chinese presentation MUST use these core terms consistently. The 
 | Input and capture | 输入与拍摄 |
 | Film / Print / Output | 胶片 / 印相 / 输出 |
 | Film route | 胶片路线 |
-| Mode / Film / LUT / Off | 模式 / 胶片 / LUT / 关闭 |
+| Simulation method / Spectral / RGB | 模拟方法 / 光谱 / RGB |
+| RGB workflow / LUT / Effects | RGB 工作流 / LUT / 效果 |
+| Film Halation / RGB Halation | 胶片光晕 / RGB 光晕 |
+| Effect order / Before look / After look | 效果顺序 / Look 前 / Look 后 |
 | Effects | 效果 |
 | Tone & Color / Range | 影调与色彩 / 范围 |
 | Brightness / Contrast | 明暗 / 反差 |
@@ -79,6 +82,22 @@ The Simplified Chinese presentation MUST use these core terms consistently. The 
 | reset <module> · help: Restore <module> to the factory state | 重置<模块> · 提示：将<模块>恢复为出厂状态 |
 | history: Reset <module> to factory | 历史：将<模块>恢复出厂值 |
 | Original / Modified / Paper back | 原图 / 修改图 / 相纸背面 |
+
+## Simulation method and halation labels
+
+The active method label MUST be `Spectral` or `RGB`.
+
+The RGB workflow label MUST be `LUT` or `Effects`.
+
+The Film-stage halation control MUST be `Film Halation`.
+
+The Effects-stage halation control MUST be `RGB Halation`.
+
+`RGB` MUST NOT label a color space or a color-only adjustment.
+
+The interface MUST NOT present `Appearance`, `Non Spectral`, `Non-Spectral`, or `Color Transform` as a method name.
+
+An effect-order control MUST use `Before look` and `After look`; it MUST NOT create a second halation model.
 
 ### Search and text entry
 
@@ -199,7 +218,7 @@ The film Grain selector MUST retain the names Spektra, Dye, and Procedural. Its 
 
 The Effects stage Grain MUST be a separate transform control. Its labels MUST NOT imply material grain or a film grain engine.
 
-Camera diffusion, Enlarger diffusion, and film Halation MUST retain their physical owners. Effects-stage Diffusion and Halation MUST be identified as transform appearance effects, not film density or a second physical stage. Preflash exposure and its independent Magenta and Yellow filter shifts MUST remain printing controls.
+Camera diffusion, Enlarger diffusion, and Film Halation MUST retain their physical owners. Effects-stage Diffusion and RGB Halation MUST be identified as transform appearance effects, not film density or a second physical stage. Preflash exposure and its independent Magenta and Yellow filter shifts MUST remain printing controls.
 
 Print viewing glare help MUST identify readout stray light, not preflash or a change in material density. Visible placement follows [stage and surface ownership](../gui-workflow/spec.md#stage-and-surface-ownership), not serialized section names.
 
@@ -253,7 +272,7 @@ The panel MUST use these labels under [image analysis](../gui-product-design/ima
 | Outside selection | 选区外 |
 | Pixel sample | 像素取样 |
 
-Mode help MUST name the photographic judgment from the owning capability rather than require prior knowledge of the instrument. RGB analysis MUST NOT be labeled Spectrum or Spectral analysis.
+Mode help MUST name the photographic judgment from the owning capability rather than require prior knowledge of the instrument. Image-analysis RGB analysis MUST NOT be labeled Spectrum or Spectral analysis; the simulation-method label Spectral is separate.
 
 Select area MUST remain distinct from the normal viewer select-to-zoom gesture. Hints MUST identify the temporary analysis tool while it is armed.
 
@@ -291,9 +310,9 @@ Undo and Redo wording MUST follow [edit history](../gui-workflow/spec.md#edit-hi
 
 ## Header and status language
 
-The header MUST identify the active render mode. In Film mode it MUST show the selected film, selected print material, and exact film route. In LUT and Off modes it MUST show the active LUT or Effects context defined by [Labels and surfaces](../gui-workflow/spec.md#labels-and-surfaces).
+The header MUST identify the active simulation method and RGB workflow. In Spectral it MUST show the selected film, selected print material, and exact film route. In RGB LUT it MUST show the active LUT context; in RGB Effects it MUST show the active Effects context under [Labels and surfaces](../gui-workflow/spec.md#labels-and-surfaces).
 
-The exact route string remains available in Film mode because it identifies the physical sequence and is required for diagnostics.
+The exact route string remains available in Spectral because it identifies the physical sequence and is required for diagnostics.
 
 The header MAY add a direct physical description beside the exact route. The description MUST translate the route without inventing a rendering category. For example, `Film → print → scan` MAY describe `input > film > print > scan`; `Film print rendering` MUST NOT replace it.
 

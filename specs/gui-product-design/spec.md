@@ -138,11 +138,11 @@ With default disclosure, the Scan jump MUST reveal Tone & Color without requirin
 
 A parameter edit, preview completion, or route change MUST NOT collapse the user's open modules or reset the inspector scroll position.
 
-Film Halation MUST be a named Film module, not a hidden generic effect. It MUST retain the feature-profile action, scatter and back-reflection controls, source response, all editable RGB components, bounce controls, and normalization.
+Film Halation MUST be a named Film module under [Halation models](../halation/spec.md), not a hidden generic effect. It MUST retain the feature-profile action, scatter and back-reflection controls, source response, all editable RGB components, bounce controls, and normalization.
 
-The Effects stage Halation MUST remain a separate transform effect. A profile is a scoped starting configuration, not a substitute for these controls.
+The Effects stage RGB Halation MUST remain a separate transform effect under [Halation models](../halation/spec.md). A profile is a scoped starting configuration, not a substitute for these controls.
 
-Grain MUST be a named Film module beside Halation. It MUST keep the five engine choices in one editing location, distinguish material grain from Procedural and Exposure Grain post-scan appearance, and MUST NOT be presented as a global effect or shared with the Effects stage. The Effects stage's Grain belongs to the transform pipeline and remains independent.
+Grain MUST be a named Film module beside Film Halation. It MUST keep the five engine choices in one editing location, distinguish material grain from Procedural and Exposure Grain post-scan appearance, and MUST NOT be presented as a global effect or shared with the Effects stage. The Effects stage's Grain belongs to the transform pipeline and remains independent.
 
 Preflash MUST be a named Print module beside the main enlarger exposure controls. Exposure, Yellow shift, and Magenta shift MUST all be available. Zero exposure disables flash and retains the filter values.
 

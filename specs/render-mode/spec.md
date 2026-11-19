@@ -5,6 +5,8 @@
 | Capability | Owns |
 | --- | --- |
 | This capability | Film, LUT, and Off modes; mode selection and switching; stage activation; the canonical `workflow.mode` value; inactive-value retention. |
+| [Simulation methods](../simulation-method/spec.md) | Spectral and RGB method language, method labels, and method mapping. |
+| [Halation models](../halation/spec.md) | Film Halation and RGB Halation model distinction. |
 | [LUT transform](../lut-transform/spec.md) | LUT declaration, validation, evaluation order, and the independent Diffusion, Halation, and Grain effects. |
 | [LUT workflow](../lut-workflow/spec.md) | LUT file export and import, LUT presets, and the LUT-stage actions. |
 | [Presets](../presets/spec.md) | Preset kinds, library behavior, and mode selection through preset application. |
@@ -17,7 +19,9 @@ A **render mode** is Film, LUT, or Off. Exactly one mode is active.
 
 Film executes the spectral film chain. LUT executes the external LUT transform and its effects. Off executes neither film nor LUT; it runs the Effects stage and output color management.
 
-The mode selector offers exactly Film, LUT, and Off. It is a global control above the stage list, not a stage and not part of the stage jump strip.
+The active mode determines the simulation method under [Simulation methods](../simulation-method/spec.md): Film is Spectral; LUT and Off are RGB.
+
+The mode selector presents the simulation method and RGB workflow under [Simulation methods](../simulation-method/spec.md). The canonical mode values remain `film`, `lut`, and `off`; the selector MUST NOT add a fourth mode. It is a global control above the stage list, not a stage and not part of the stage jump strip.
 
 The header MAY identify the active mode and active material, LUT, or Effects context as read-only information. It MUST NOT provide a second mode editor.
 
@@ -31,7 +35,7 @@ The header MAY identify the active mode and active material, LUT, or Effects con
 | Film, Print, and Scan | active | inactive | inactive |
 | Scan Tone & Color | active | inactive | inactive |
 | LUT declaration and LUT Grade | inactive | active | inactive |
-| Effects: Diffusion, Halation, Grain | inactive | active | active |
+| Effects: Diffusion, RGB Halation, Grain | inactive | active | active |
 | Output color space, encoding, and gamut processing | active | active | active |
 | Output mix and CMYK ink style | active | inactive | inactive |
 
@@ -71,7 +75,7 @@ The canonical path is `workflow.mode` with values `film`, `lut`, and `off`. An a
 The render mode has three optional runtime groups:
 
 - `lut`: the LUT declaration and strength;
-- `effects`: Diffusion, Halation, and Grain;
+- `effects`: Diffusion, RGB Halation, and Grain;
 - `grade`: the LUT Grade.
 
 The former `lut_look` group MUST NOT appear in a new document. A one-time migration splits it into `lut`, `effects`, and `grade`.
