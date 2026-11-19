@@ -18,7 +18,7 @@ Two schemes exist: Film Multiple Exposure and RGB Multiple Exposure.
 The schemes share a stack shape but not a blend law.
 
 **Film Multiple Exposure** composes film record exposure before development.
-**RGB Multiple Exposure** composes linear light before the LUT transform.
+**RGB Multiple Exposure** composes linear light before the active RGB look and output stages.
 A multiple-exposure stack is the ordered set of two to eight exposures.
 
 [Simulation methods](../simulation-method/spec.md#declared-tracks) declares the capability dual-track.
@@ -72,9 +72,14 @@ Film Multiple Exposure MUST follow the [Film chain](../film-chain/spec.md) stage
 - Each exposure MUST run the active pre-LUT effects at their [LUT transform](../lut-transform/spec.md#color-order) placement.
 - Composition MUST add linear light. It MUST NOT add density, log exposure, or encoded values.
 - RGB Multiple Exposure MUST NOT run film metering, camera light leak, film development, DIR couplers, material grain, print, or scan.
-- The LUT, LUT Grade, output gamut, output encoding, and Effects Grain MUST each run once after composition.
-- RGB Halation MUST see each exposure before composition; the LUT MUST see the composite.
-- RGB Multiple Exposure MUST select LUT mode. Off-mode stacking is outside this capability.
+- The active LUT and LUT Grade MUST run once after composition.
+- Output gamut and output encoding MUST run once after composition.
+- Active Effects Grain MUST run once after composition.
+- RGB Halation MUST see each exposure before composition.
+- An active LUT MUST see the composite.
+- RGB Multiple Exposure runs in the RGB workflow.
+- The LUT, LUT Grade, Diffusion, RGB Halation, and Grain modules are independently active.
+- An inactive module MUST be an exact bypass.
 - RGB Multiple Exposure MUST accept raster input only. It MUST NOT accept camera RAW.
 - A metering policy is outside RGB Multiple Exposure. Per-exposure offsets are manual.
 - RGB Multiple Exposure MUST NOT claim Film visual equivalence. Equivalence belongs to a declared [look pair](../presets/spec.md#look-pairs).
@@ -91,7 +96,7 @@ Film Multiple Exposure MUST follow the [Film chain](../film-chain/spec.md) stage
 | Seed | One deterministic seed for the stack. |
 | Memory bound | Optional host-memory bound. |
 | Film group | Film selection, print reference, metering, route, scan, RAW, and channel-swap values. |
-| RGB group | LUT declaration, LUT Grade, and Effects values. |
+| RGB group | Active LUT/LUT Grade values and Effects values. |
 | Weights | Not admitted; offsets express relative exposure. |
 | Per-exposure transform | Not admitted. |
 | Per-exposure preset | Not admitted. |
@@ -125,5 +130,5 @@ The [CLI](../cli/spec.md#multiple-exposure) is the product surface for both meth
 ## Acceptance
 
 1. A Film stack sums record exposure and develops once.
-2. An RGB stack sums per-shot linear light; Diffusion and RGB Halation run per shot; the LUT, LUT Grade, output encoding, and Grain run once.
+2. An RGB stack sums per-shot linear light; active pre-LUT effects run per shot; active post-composition modules run once.
 3. A mixed-method stack or a per-exposure transform fails before output.

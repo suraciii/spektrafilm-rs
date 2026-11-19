@@ -5,7 +5,7 @@
 | Capability | Owns |
 | --- | --- |
 | This capability | The non-spectral LUT transform, external LUT color management, and independent effect layers |
-| [Render modes](../render-mode/spec.md) | Film, LUT, and Off selection; stage activation; switching and inactive-value retention |
+| [Render modes](../render-mode/spec.md) | Film, LUT, and RGB Effects selection; stage activation; switching and inactive-value retention |
 | [Film chain](../film-chain/spec.md) | Spectral film and print simulation |
 | [Halation models](../halation/spec.md) | Film Halation and RGB Halation model distinction |
 | [LUT delivery](../lut-delivery/spec.md) | Exporting the film chain |
@@ -17,13 +17,13 @@
 
 A LUT transform uses an external 3D color transform plus independent effect layers. It is non-spectral and operates on RGB. It does not model film sensitivity, record density, development, printing, scanning, or illumination.
 
-A **LUT mode** renders a LUT transform. A **Film mode** renders the spectral film chain. **Off mode** renders the effects without a LUT or grade.
+A **LUT mode** renders a LUT transform. A **Film mode** renders the spectral film chain. **RGB Effects** renders the effects without a LUT or grade; its canonical mode value is `off`.
 
 [Render modes](../render-mode/spec.md) owns mode selection and activation.
 
 The product-level LUT export/import handoff and LUT preset lifecycle are owned by the [LUT workflow](../lut-workflow/spec.md).
 
-| Property | Film mode | LUT mode | Off mode |
+| Property | Film mode | LUT mode | RGB Effects |
 | --- | --- | --- | --- |
 | Color source | Spectral film and print simulation | External 3D LUT | Input image |
 | Material profiles | Required by the route | Not consumed | Not consumed |
@@ -36,7 +36,7 @@ The product-level LUT export/import handoff and LUT preset lifecycle are owned b
 
 LUT mode MUST NOT be described as a film stock, a measured film response, or a spectral simulation. A LUT MAY encode a rendering derived from film, but the LUT transform itself is a colorimetric transform.
 
-LUT and Off modes MUST NOT add scene atmosphere, fog, motion integration, volumetric scene glow, local masks, or subject-aware adjustments. Those are outside this contract.
+LUT and RGB Effects MUST NOT add scene atmosphere, fog, motion integration, volumetric scene glow, local masks, or subject-aware adjustments. Those are outside this contract.
 
 ## LUT input
 
@@ -85,7 +85,7 @@ input
   → grain
 ```
 
-Off mode MUST use the same order with the shaper, LUT, and LUT Grade as exact bypasses:
+The RGB Effects workflow MUST use the same order with the shaper, LUT, and LUT Grade as exact bypasses:
 
 ```text
 input
@@ -148,7 +148,7 @@ A LUT transform that already contains lens character MUST allow diffusion to rem
 
 LUT Grade MUST use the existing [Tone and color](../finishing/spec.md) response in the root `grade` group. It MUST remain optional and MUST NOT become part of the LUT.
 
-`grade.active` switches the response. Disabling it MUST retain the response values and bypass it exactly; re-enabling it MUST restore the same accepted response. LUT Grade is active only in LUT mode, and Off mode MUST bypass it.
+`grade.active` switches the response. Disabling it MUST retain the response values and bypass it exactly; re-enabling it MUST restore the same accepted response. LUT Grade is active only in LUT mode; the RGB Effects workflow MUST bypass it.
 
 ### Grain
 
@@ -217,7 +217,7 @@ A failed LUT import or render MUST preserve the preceding accepted image and par
 
 ## Acceptance
 
-1. LUT mode applies a declared external LUT without loading film or print profiles; Off mode applies the same effects without a LUT or LUT Grade; mode switching preserves inactive values.
+1. LUT mode applies a declared external LUT without loading film or print profiles; the RGB Effects workflow applies the same effects without a LUT or LUT Grade; mode switching preserves inactive values.
 2. Diffusion, RGB Halation, LUT Grade, and Grain remain independently toggleable; RGB Halation runs before the LUT; LUT strength zero bypasses the LUT color transform and no spatial effect is encoded in the LUT.
 3. Missing or ambiguous color-space, domain, domain policy, shaper, file, or hash declarations fail before output without silent substitution, clipping, or fallback.
 4. A clamp render outside the declared domain clips only at the domain edge and reports the clipped fraction; fail stops the render instead. The LUT stage shows the full clipped warning and every domain axis.

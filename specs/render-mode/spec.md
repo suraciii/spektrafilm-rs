@@ -29,6 +29,9 @@ The global selector presents the simulation method and RGB workflow.
 
 The canonical mode values remain `film`, `lut`, and `off`; the selector MUST NOT add a fourth mode.
 
+Visible surfaces MUST present the active modules, not a mode named Off.
+The canonical `off` value is an internal dispatch value.
+
 The selector is a global control above the stage list, not a stage and not part of the stage jump strip.
 
 The header MAY identify the active simulation method and active material, LUT, or Effects context as read-only information. It MUST NOT provide a second method editor.

@@ -20,10 +20,11 @@ flowchart LR
     FD --> FP[Print and scan]
   end
   subgraph RGB
-    R1[Exposure 1: linearize, offset, diffusion, halation] --> RS[Linear light sum]
-    R2[Exposure N: linearize, offset, diffusion, halation] --> RS
-    RS --> RL[LUT and LUT Grade]
+    R1[Exposure 1: linearize, offset, active effects] --> RS[Linear light sum]
+    R2[Exposure N: linearize, offset, active effects] --> RS
+    RS --> RL[Active LUT and LUT Grade]
     RL --> RO[Output encoding and Grain]
+    RS -. LUT inactive .-> RO
   end
 ```
 
@@ -42,15 +43,23 @@ Each exposure is decoded, offset, clamped to nonnegative light, and passed throu
 Diffusion precedes RGB Halation under the [LUT transform](../lut-transform/spec.md#color-order) order.
 The sum is linear light.
 
-The LUT, LUT Grade, output encoding, and Grain run after the sum.
+The active LUT and LUT Grade and output encoding run after the sum.
+Active Grain runs after output encoding.
+
 Per-shot effects are required because RGB Halation is not linear in scene light.
 A composite-then-halation order would make the halo depend on the sum instead of each exposure.
+
+## Module activation
+
+The RGB workflow runs the modules the user enables.
+An inactive module is an exact bypass and retains its stored values.
+RGB Multiple Exposure MUST NOT require a LUT.
 
 ## Invariants
 
 1. Film composition adds record exposure; it never adds density.
 2. RGB composition adds linear light; it never adds density, log exposure, or encoded values.
-3. RGB Diffusion and RGB Halation run per exposure; the LUT, LUT Grade, output encoding, and Grain run once.
+3. Active RGB pre-LUT effects run per exposure; active post-composition modules run once.
 4. RGB per-exposure offsets apply after decoding and before spatial effects.
 5. A stack has one method; method groups do not mix.
 6. No per-exposure transform or preset exists.
@@ -67,6 +76,5 @@ A failed memory check publishes no output.
 - A multiple-exposure GUI inspector.
 - Per-exposure transforms.
 - Per-exposure presets.
-- RGB Off-mode stacking.
 - RGB film metering or camera light leak.
 - Film density composition.
