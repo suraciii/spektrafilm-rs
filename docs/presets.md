@@ -34,6 +34,8 @@ Core migrates versioned legacy documents and exports schema v7 for Film and sect
 
 Film look and section documents use schema v7. LUT presets use schema v8 and carry an external LUT path, its content hash, the LUT declaration, effects, LUT Grade, and provenance. Effects presets use schema v9 and carry Effects without a LUT or Grade. Effects and Grade live at the preset root; Grade records its enable state beside the retained values, so disabling it does not discard the response. A LUT or Effects preset contains no film or print references; a LUT preset contains no LUT pixels. The LUT file remains an external dependency; a changed or missing file fails validation and the product does not substitute another look.
 
+Built-in look pairs link one Film preset and one RGB Effects preset. The pair is a library relationship, not a document field, and user presets cannot declare one. `CineStill 800T` pairs with `CineStill 800T RGB`, which carries the RGB Halation values for that appearance target.
+
 In Film mode, **Save preset...** captures a film look. In LUT mode, it captures the imported LUT declaration, Effects, and LUT Grade and requires a validated LUT file. In Off mode, it captures Effects without a LUT or Grade. `process --preset` accepts a LUT or Effects preset without `--film`, `--paper`, `--route`, or `--scan-film`; mixing one with a film look or section preset is rejected. `preset list` reports the LUT or Effects kind, LUT file status, and active Effects. Exporting or importing a LUT preset moves only the preset document.
 
 User documents live in `<config_dir>/presets` under the shared `SPEKTRAFILM_CONFIG_DIR` policy. A name resolves in My Presets first, then Built-in. `user:` and `built-in:` select one group.

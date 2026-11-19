@@ -277,6 +277,7 @@ impl Pipeline {
                         .effects
                         .as_ref()
                         .unwrap_or(&crate::lut_look::EffectsParams::default()),
+                    params.grade.as_ref(),
                 )?))
             } else {
                 None

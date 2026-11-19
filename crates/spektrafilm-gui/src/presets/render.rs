@@ -187,7 +187,7 @@ fn preset_context(
             let mut active = Vec::new();
             for (enabled, key) in [
                 (effects.diffusion.active, "surfaces.lut.diffusion"),
-                (effects.halation.active, "surfaces.lut.halation"),
+                (effects.halation.active, "surfaces.lut.rgb_halation"),
                 (effects.grain.active, "surfaces.lut.grain"),
             ] {
                 if enabled {
@@ -1046,7 +1046,7 @@ impl App {
                 let mut active = Vec::new();
                 for (enabled, label) in [
                     (effects.diffusion.active, "surfaces.lut.diffusion"),
-                    (effects.halation.active, "surfaces.lut.halation"),
+                    (effects.halation.active, "surfaces.lut.rgb_halation"),
                     (effects.grain.active, "surfaces.lut.grain"),
                 ] {
                     if enabled {

@@ -536,7 +536,7 @@ Terminal detection MUST NOT change the format. JSON MUST contain one object on s
 
 In LUT and RGB Effects workflows, `route`, `film_profile`, `print_profile`, capture illuminant, and readout illuminant MUST be null. Film-grain reports MUST report inactive.
 
-In the RGB Effects workflow, the LUT declaration and LUT Grade MUST report inactive.
+In the RGB Effects workflow, the LUT declaration MUST report inactive; LUT Grade MUST report its independent active state.
 
 `output` MUST retain `path`, `format`, `bit_depth`, `color_space`, `cctf_encoding`, `compression`, `jpeg_quality`, and `jpeg_subsampling`; inapplicable options MUST be `null`. `backend` MUST report the requested `cpu` or `gpu` policy, or `auto` when selection remains deferred. Diagnostics MUST go to stderr.
 
@@ -576,7 +576,7 @@ In Film mode it MUST show profile identities, route, scan-output mode, effective
 
 In LUT mode it MUST show the cube path, title when present, input and output spaces, per-axis domain, domain policy, shaper, strength, Effects, and LUT Grade, and MUST NOT print film grain or spectral stage controls as active.
 
-In the RGB Effects workflow it MUST show the active Effects and output color management, and MUST NOT print film, LUT, or LUT Grade controls as active.
+In the RGB Effects workflow it MUST show the active Effects, the independent LUT Grade state, and output color management, and MUST NOT print film or LUT controls as active.
 
 Text layout MUST NOT be a machine contract.
 

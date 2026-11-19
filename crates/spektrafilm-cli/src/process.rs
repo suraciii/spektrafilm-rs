@@ -147,6 +147,14 @@ pub struct ProcessArgs {
         help_heading = "Look and workflow"
     )]
     pub(crate) lut: Option<PathBuf>,
+    /// Use the RGB track for Effects and LUT Grade; --lut is optional.
+    /// Conflicts with Film selectors and route controls.
+    #[arg(
+        long,
+        conflicts_with_all = ["preset", "film", "paper", "route", "scan_film", "feature_profiles"],
+        help_heading = "Look and workflow"
+    )]
+    pub(crate) rgb: bool,
     /// Scan film directly, skipping printing; conflicts with --route.
     #[arg(long, conflicts_with = "route", help_heading = "Look and workflow")]
     pub(crate) scan_film: bool,
@@ -274,6 +282,7 @@ impl Default for ProcessArgs {
             paper: None,
             preset: Vec::new(),
             lut: None,
+            rgb: false,
             scan_film: false,
             timings: false,
             diagnostics: None,
@@ -886,6 +895,17 @@ fn cmd_process(
         presets.push(Preset::capture_lut(
             "--lut",
             look,
+            Provenance {
+                implementation_version: env!("CARGO_PKG_VERSION").into(),
+                model_version: "spektrafilm".into(),
+                scanner: None,
+            },
+        ));
+    }
+    if args.rgb && args.lut.is_none() {
+        presets.push(Preset::capture_effects(
+            "--rgb",
+            spektrafilm_core::lut_look::EffectsParams::default(),
             Provenance {
                 implementation_version: env!("CARGO_PKG_VERSION").into(),
                 model_version: "spektrafilm".into(),
@@ -1694,7 +1714,7 @@ pub(crate) fn apply_scan_profile(
     Ok(())
 }
 
-fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result<()> {
+pub(crate) fn apply_channel_swap(profile: &mut profile::Profile, selection: &str) -> Result<()> {
     if selection == "none" {
         return Ok(());
     }

@@ -664,7 +664,7 @@ fn browser_search_matches_both_material_names_and_ids_without_changing_order_or_
 }
 
 #[test]
-fn browser_filters_only_looks_and_does_not_hide_library_faults() {
+fn browser_shows_complete_presets_and_does_not_hide_library_faults() {
     let (mut app, directory) = test_app("search-faults");
     let section = Preset::capture_section(
         "Needle section",
@@ -691,7 +691,10 @@ fn browser_filters_only_looks_and_does_not_hide_library_faults() {
     app.presets.query.clear();
     app.presets.update_search(&app.films, &app.papers);
     assert!(app.presets.visible_indices().iter().all(|index| {
-        app.presets.entries[*index].preset.as_ref().unwrap().kind() == Ok(PresetKind::Look)
+        matches!(
+            app.presets.entries[*index].preset.as_ref().unwrap().kind(),
+            Ok(PresetKind::Look | PresetKind::Lut | PresetKind::Effects)
+        )
     }));
     std::fs::remove_dir_all(directory).unwrap();
 }

@@ -17,7 +17,9 @@
 
 A LUT transform uses an external 3D color transform plus independent effect layers. It is non-spectral and operates on RGB. It does not model film sensitivity, record density, development, printing, scanning, or illumination.
 
-A **LUT mode** renders a LUT transform. A **Film mode** renders the spectral film chain. **RGB Effects** renders the effects without a LUT or grade; its canonical mode value is `off`.
+A **LUT mode** renders a LUT transform. A **Film mode** renders the spectral film chain.
+
+**RGB Effects** renders the effects without a LUT; its LUT Grade is independently optional. Its canonical mode value is `off`.
 
 [Render modes](../render-mode/spec.md) owns mode selection and activation.
 
@@ -31,7 +33,7 @@ The product-level LUT export/import handoff and LUT preset lifecycle are owned b
 | Grain | Film-density or post-scan engine | Independent appearance layer | Independent appearance layer |
 | Halation model | Film Halation | RGB Halation | RGB Halation |
 | Diffuse optics | Camera or enlarger stage | Pre-LUT effect | Pre-LUT effect |
-| Grade | Scan Tone & Color | LUT Grade | None |
+| Grade | Scan Tone & Color | LUT Grade | LUT Grade |
 | Spectral claims | Governed by film chain | None | None |
 
 LUT mode MUST NOT be described as a film stock, a measured film response, or a spectral simulation. A LUT MAY encode a rendering derived from film, but the LUT transform itself is a colorimetric transform.
@@ -85,13 +87,14 @@ input
   → grain
 ```
 
-The RGB Effects workflow MUST use the same order with the shaper, LUT, and LUT Grade as exact bypasses:
+The RGB Effects workflow MUST use the same order with the shaper and LUT as exact bypasses; LUT Grade runs when active:
 
 ```text
 input
   → linear working RGB
   → diffusion
   → RGB Halation
+  → LUT Grade (optional)
   → output gamut
   → output encoding
   → grain
@@ -108,7 +111,7 @@ input
 The order MUST NOT be user-reorderable. An inactive effect MUST be an exact bypass.
 
 Under [RGB Multiple Exposure](../multiple-exposure/spec.md#rgb-multiple-exposure), Diffusion and RGB Halation MUST run per exposure before composition.
-The LUT, LUT Grade, output gamut, output encoding, and Grain MUST run once after composition.
+The active LUT and LUT Grade, output gamut, output encoding, and Grain MUST run once after composition.
 
 ## Effects
 
@@ -148,7 +151,7 @@ A LUT transform that already contains lens character MUST allow diffusion to rem
 
 LUT Grade MUST use the existing [Tone and color](../finishing/spec.md) response in the root `grade` group. It MUST remain optional and MUST NOT become part of the LUT.
 
-`grade.active` switches the response. Disabling it MUST retain the response values and bypass it exactly; re-enabling it MUST restore the same accepted response. LUT Grade is active only in LUT mode; the RGB Effects workflow MUST bypass it.
+`grade.active` switches the response. Disabling it MUST retain the response values and bypass it exactly; re-enabling it MUST restore the same accepted response. LUT Grade is independent of the LUT table and MAY be active in LUT mode or the RGB Effects workflow.
 
 ### Grain
 
@@ -217,7 +220,7 @@ A failed LUT import or render MUST preserve the preceding accepted image and par
 
 ## Acceptance
 
-1. LUT mode applies a declared external LUT without loading film or print profiles; the RGB Effects workflow applies the same effects without a LUT or LUT Grade; mode switching preserves inactive values.
+1. LUT mode applies a declared external LUT without loading film or print profiles; the RGB Effects workflow applies the same effects without a LUT; LUT Grade is independently optional; mode switching preserves inactive values.
 2. Diffusion, RGB Halation, LUT Grade, and Grain remain independently toggleable; RGB Halation runs before the LUT; LUT strength zero bypasses the LUT color transform and no spatial effect is encoded in the LUT.
 3. Missing or ambiguous color-space, domain, domain policy, shaper, file, or hash declarations fail before output without silent substitution, clipping, or fallback.
 4. A clamp render outside the declared domain clips only at the domain edge and reports the clipped fraction; fail stops the render instead. The LUT stage shows the full clipped warning and every domain axis.

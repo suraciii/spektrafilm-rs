@@ -1289,3 +1289,341 @@ fn multiple_exposure_is_ev_only_at_the_entry_point() {
     );
     assert!(!output.exists());
 }
+
+#[test]
+fn rgb_multiple_exposure_activates_effects_and_lut_without_film() {
+    let f = Fixture::new();
+    let input = f.0.join("input.png");
+    let output = f.0.join("rgb-stack.png");
+    let cube = f.0.join("look.cube");
+    std::fs::write(
+        &cube,
+        "TITLE \"CLI Look\"\nLUT_3D_SIZE 2\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n\
+         0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n",
+    )
+    .unwrap();
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let input_text = input.to_str().unwrap();
+    let output_text = output.to_str().unwrap();
+    let cube_text = cube.to_str().unwrap();
+    let run = |extra: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_spektrafilm"));
+        command
+            .arg("process")
+            .args(["--backend", "cpu", "--data-dir"])
+            .arg(&data)
+            .args(extra)
+            .env("RUST_LOG", "off")
+            .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+            .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+            .env_remove("SPEKTRAFILM_DATA_DIR")
+            .env_remove("SPEKTRAFILM_BACKEND");
+        command.output().unwrap()
+    };
+
+    let dry = run(&[
+        "--rgb",
+        "--expose",
+        input_text,
+        "--expose",
+        input_text,
+        "--set",
+        "effects.halation.active=true",
+        "--dry-run",
+    ]);
+    assert!(
+        dry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry.stderr)
+    );
+    let report: Value = serde_json::from_slice(&dry.stdout).unwrap();
+    assert_eq!(report["method"], "rgb");
+    assert_eq!(report["modules"]["effects"]["halation"], true);
+
+    let render = run(&[
+        "--rgb",
+        "--expose",
+        input_text,
+        "--expose-ev",
+        "0",
+        "--expose",
+        input_text,
+        "--expose-ev",
+        "0",
+        "--set",
+        "effects.halation.active=true",
+        "--set",
+        "effects.halation.mask_low=0.1",
+        "--set",
+        "effects.halation.sigma_um=[2,2,2]",
+        "--set",
+        "effects.halation.strength=[0.5,0,0]",
+        "--output",
+        output_text,
+    ]);
+    assert!(
+        render.status.success(),
+        "{}",
+        String::from_utf8_lossy(&render.stderr)
+    );
+    assert!(output.is_file());
+    assert!(
+        String::from_utf8_lossy(&render.stderr).contains("multiple exposure rgb"),
+        "{}",
+        String::from_utf8_lossy(&render.stderr)
+    );
+
+    let lut_dry = run(&[
+        "--lut",
+        cube_text,
+        "--expose",
+        input_text,
+        "--expose",
+        input_text,
+        "--dry-run",
+    ]);
+    assert!(
+        lut_dry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lut_dry.stderr)
+    );
+    let report: Value = serde_json::from_slice(&lut_dry.stdout).unwrap();
+    assert_eq!(report["method"], "rgb");
+    assert_eq!(report["modules"]["lut"], true);
+
+    let conflict = run(&[
+        "--rgb",
+        "--film",
+        "kodak_portra_400",
+        "--expose",
+        input_text,
+        "--expose",
+        input_text,
+        "--dry-run",
+    ]);
+    assert!(!conflict.status.success());
+    assert!(
+        String::from_utf8_lossy(&conflict.stderr).contains("cannot be used with"),
+        "{}",
+        String::from_utf8_lossy(&conflict.stderr)
+    );
+
+    let recipe_path = f.0.join("rgb-recipe.json");
+    std::fs::write(
+        &recipe_path,
+        serde_json::json!({
+            "schema": "spektrafilm.multiple-exposure/2",
+            "method": "rgb",
+            "seed": 0,
+            "shots": [
+                {"path": input, "exposure_ev": 0.0},
+                {"path": input, "exposure_ev": 0.0}
+            ],
+            "rgb": {
+                "effects": {
+                    "halation": {
+                        "active": true,
+                        "mask_low": 0.1,
+                        "mask_high": 2.0,
+                        "mask_transition": 0.1,
+                        "sigma_um": [2.0, 2.0, 2.0],
+                        "strength": [0.5, 0.0, 0.0],
+                        "n_bounces": 1,
+                        "bounce_decay": 0.5
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let recipe_output = f.0.join("rgb-recipe.png");
+    let recipe = run(&[
+        "--recipe",
+        recipe_path.to_str().unwrap(),
+        "--output",
+        recipe_output.to_str().unwrap(),
+    ]);
+    assert!(
+        recipe.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recipe.stderr)
+    );
+    assert!(recipe_output.is_file());
+}
+
+#[test]
+fn rgb_process_effects_and_grade_run_without_lut_or_film() {
+    let f = Fixture::new();
+    let output = f.0.join("rgb-effects.png");
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let result = Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
+        .arg("process")
+        .arg(f.0.join("input.png"))
+        .args(["--backend", "cpu", "--data-dir"])
+        .arg(&data)
+        .args(["--rgb"])
+        .args(["--input-color-space", "sRGB"])
+        .args(["--input-cctf-decoding", "true"])
+        .args(["--set", "effects.diffusion.active=true"])
+        .args(["--set", "effects.diffusion.strength=0.2"])
+        .args(["--set", "grade.active=true"])
+        .args(["--set", "grade.contrast=0.1"])
+        .arg("--output")
+        .arg(&output)
+        .env("RUST_LOG", "off")
+        .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+        .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+        .env_remove("SPEKTRAFILM_DATA_DIR")
+        .env_remove("SPEKTRAFILM_BACKEND")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(output.is_file());
+}
+
+#[test]
+fn film_multiple_exposure_dry_run_accepts_route_scan_and_channel_swap() {
+    let f = Fixture::new();
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let input = f.0.join("input.png");
+    let input_text = input.to_str().unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
+        .arg("process")
+        .args(["--film", "kodak_portra_400"])
+        .args(["--backend", "cpu", "--data-dir"])
+        .arg(&data)
+        .args(["--expose", input_text, "--expose", input_text])
+        .args([
+            "--scan-film",
+            "--scan-output",
+            "direct_scan",
+            "--film-channel-swap",
+            "2,1,0",
+            "--dry-run",
+            "--dry-run-format",
+            "json",
+        ])
+        .env("RUST_LOG", "off")
+        .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+        .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+        .env_remove("SPEKTRAFILM_DATA_DIR")
+        .env_remove("SPEKTRAFILM_BACKEND")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["method"], "film");
+    assert_eq!(report["route"], "input > film > scan");
+    assert_eq!(report["scan_film"], true);
+    assert_eq!(report["scan_output"], "direct_scan");
+    assert_eq!(report["channel_swap"]["film"], "2,1,0");
+}
+
+#[test]
+fn film_multiple_exposure_recipe_round_trips_workflow() {
+    let f = Fixture::new();
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let input = f.0.join("input.png");
+    let input_text = input.to_str().unwrap();
+    let recipe = f.0.join("film-recipe.json");
+    let output = f.0.join("film-recipe.png");
+    let render = Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
+        .arg("process")
+        .args(["--film", "kodak_portra_400"])
+        .args(["--backend", "cpu", "--data-dir"])
+        .arg(&data)
+        .args(["--expose", input_text, "--expose", input_text])
+        .args([
+            "--scan-film",
+            "--scan-output",
+            "direct_scan",
+            "--film-channel-swap",
+            "2,1,0",
+        ])
+        .arg("--recipe-out")
+        .arg(&recipe)
+        .arg("--output")
+        .arg(&output)
+        .env("RUST_LOG", "off")
+        .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+        .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+        .env_remove("SPEKTRAFILM_DATA_DIR")
+        .env_remove("SPEKTRAFILM_BACKEND")
+        .output()
+        .unwrap();
+    assert!(
+        render.status.success(),
+        "{}",
+        String::from_utf8_lossy(&render.stderr)
+    );
+    let written: Value = serde_json::from_slice(&std::fs::read(&recipe).unwrap()).unwrap();
+    assert_eq!(written["film"]["scan_film"], true);
+    assert_eq!(written["film"]["scan_output"], "direct_scan");
+    assert_eq!(written["film"]["film_channel_swap"], "2,1,0");
+
+    let dry_run = Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
+        .arg("process")
+        .arg("--recipe")
+        .arg(&recipe)
+        .args(["--backend", "cpu", "--data-dir"])
+        .arg(&data)
+        .args(["--dry-run", "--dry-run-format", "json"])
+        .env("RUST_LOG", "off")
+        .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+        .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+        .env_remove("SPEKTRAFILM_DATA_DIR")
+        .env_remove("SPEKTRAFILM_BACKEND")
+        .output()
+        .unwrap();
+    assert!(
+        dry_run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry_run.stderr)
+    );
+    let report: Value = serde_json::from_slice(&dry_run.stdout).unwrap();
+    assert_eq!(report["route"], "input > film > scan");
+    assert_eq!(report["scan_output"], "direct_scan");
+    assert_eq!(report["channel_swap"]["film"], "2,1,0");
+}
+
+#[test]
+fn rgb_off_dry_run_text_reports_an_active_grade_without_a_lut() {
+    let f = Fixture::new();
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+    let result = Command::new(env!("CARGO_BIN_EXE_spektrafilm"))
+        .arg("process")
+        .arg(f.0.join("input.png"))
+        .args(["--backend", "cpu", "--data-dir"])
+        .arg(&data)
+        .args(["--rgb"])
+        .args(["--input-color-space", "sRGB"])
+        .args(["--input-cctf-decoding", "true"])
+        .args(["--set", "grade.active=true"])
+        .args(["--set", "grade.contrast=0.1"])
+        .args(["--dry-run", "--dry-run-format", "text"])
+        .env("RUST_LOG", "off")
+        .env("SPEKTRAFILM_CONFIG_DIR", f.0.join("config"))
+        .env_remove("SPEKTRAFILM_INTERNAL_PRESERVE_USER_EDITS")
+        .env_remove("SPEKTRAFILM_DATA_DIR")
+        .env_remove("SPEKTRAFILM_BACKEND")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let text = String::from_utf8_lossy(&result.stdout);
+    assert!(text.contains("mode: off"), "{text}");
+    assert!(text.contains("lut: inactive"), "{text}");
+    assert!(text.contains("lut grade: active"), "{text}");
+}

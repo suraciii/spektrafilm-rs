@@ -27,7 +27,7 @@ These adjustments MUST NOT change material formation or scanner interpretation. 
 
 The adjustments MUST use fixed, image-independent responses. They MUST NOT measure automatic exposure, white balance, histogram endpoints, or subject masks.
 
-The module operates on the RGB image supplied by [Image input](../image-input/spec.md) or the [LUT Grade](../lut-transform/spec.md) boundary. It is inactive in Off mode. It MUST NOT change input-alpha handling or introduce alpha compositing.
+The module operates on the RGB image supplied by [Image input](../image-input/spec.md) or the [LUT Grade](../lut-transform/spec.md) boundary. The Scan Tone & Color stage is inactive in Off mode; the shared response remains available through an active LUT Grade. It MUST NOT change input-alpha handling or introduce alpha compositing.
 
 An RGB-only result MUST NOT be presented as proof of alpha preservation.
 

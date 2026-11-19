@@ -176,6 +176,13 @@ impl BundleBuilder {
             first.params().output_mix.amount.to_string(),
         );
         provenance.insert("model_version".into(), crate::runtime::MODEL_VERSION.into());
+        if let Some(halation) = &spec.paired_halation {
+            provenance.insert(
+                "paired_halation".into(),
+                serde_json::to_string(halation).map_err(|error| error.to_string())?,
+            );
+            provenance.insert("paired_halation.included".into(), "false".into());
+        }
         let profile = &first.params().scanner.scan_profile;
         let (film, print) =
             resolve_profiles(&spec.film_profile, &spec.print_profiles[0], data_dir)?;
@@ -623,6 +630,30 @@ mod tests {
             "input_color_space":input, "output_color_space":output
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn bundle_spec_accepts_a_paired_halation_record() {
+        let spec: BundleSpec = serde_json::from_value(serde_json::json!({
+            "film_profile": "kodak_portra_400",
+            "print_profiles": ["kodak_portra_endura"],
+            "input_color_space": "sRGB",
+            "output_color_space": "sRGB",
+            "paired_halation": {
+                "active": true,
+                "mask_low": 0.18,
+                "mask_high": 2.0,
+                "mask_transition": 0.1,
+                "sigma_um": [160.0, 160.0, 160.0],
+                "strength": [0.15, 0.045, 0.005],
+                "n_bounces": 3,
+                "bounce_decay": 0.5
+            }
+        }))
+        .unwrap();
+        let halation = spec.paired_halation.expect("paired halation");
+        assert_eq!(halation.sigma_um, [160.0; 3]);
+        assert_eq!(halation.strength, [0.15, 0.045, 0.005]);
     }
 
     #[test]

@@ -1,4 +1,3 @@
-use super::blur::GaussianScratch;
 use super::highlight::{PointwiseAccess, pointwise_job};
 use super::paged::ImagePage;
 use super::*;
@@ -54,10 +53,15 @@ impl WgpuBackend {
         if img.width == 0 || img.height == 0 {
             return Ok(img.clone());
         }
+        if params.n_bounces == 0
+            || params.strength.iter().all(|value| *value == 0.0)
+            || params.sigma_px.iter().all(|value| *value == 0.0)
+        {
+            return Ok(img.clone());
+        }
         let base = self.upload_rgb_pages(img, "lut_halation_base")?;
         let mask = self.allocate_image_pages(img.width, img.height, "lut_halation_mask")?;
-        let original =
-            self.allocate_image_pages(img.width, img.height, "lut_halation_mask_original")?;
+        let halo = self.allocate_image_pages(img.width, img.height, "lut_halation_halo")?;
         let n = u64::from(img.width) * u64::from(img.height);
         let make_mask = pointwise_job(
             self,
@@ -73,23 +77,25 @@ impl WgpuBackend {
             &[
                 (&base, PointwiseAccess::Read),
                 (&mask, PointwiseAccess::Write),
-                (&original, PointwiseAccess::Write),
             ],
             None,
             "lut_halation_mask",
         )?;
         make_mask.execute(self)?;
 
-        let mut scratch = GaussianScratch::new(img.width, img.height);
-        let state = super::halation::build_halation_state(
-            &params.halation,
+        if let Some(state) = super::halation::build_rgb_halation_state(
+            &mask,
+            &halo,
             img.width,
             img.height,
-            &mask,
-            &mut scratch,
+            params.sigma_px,
+            params.strength,
+            params.n_bounces,
+            params.bounce_decay,
             self,
-        )?;
-        state.submit(self)?;
+        )? {
+            state.submit(self)?;
+        }
 
         let add = pointwise_job(
             self,
@@ -105,7 +111,7 @@ impl WgpuBackend {
             &[
                 (&base, PointwiseAccess::ReadWrite),
                 (&mask, PointwiseAccess::Read),
-                (&original, PointwiseAccess::Read),
+                (&halo, PointwiseAccess::Read),
             ],
             None,
             "lut_halation_add",

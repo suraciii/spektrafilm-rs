@@ -56,7 +56,7 @@ struct ChannelScaleParams {
     scale: [f32; 4],
 }
 
-fn per_channel_job(
+pub(super) fn per_channel_job(
     backend: &WgpuBackend,
     n_pixels: u32,
     src: &dyn RasterStorage,
@@ -384,6 +384,99 @@ pub(super) fn build_halation_state(
         halation_source,
         halation,
     })
+}
+
+pub(super) struct RgbHalationState {
+    _intermediate: Vec<ImagePage>,
+    _output: Vec<ImagePage>,
+    blurs: Vec<BlurJob>,
+    accumulate: Vec<PointwiseJob>,
+}
+
+impl RgbHalationState {
+    pub(super) fn submit(&self, backend: &WgpuBackend) -> Result<(), String> {
+        for (blur, accumulate) in self.blurs.iter().zip(&self.accumulate) {
+            blur.submit(backend)?;
+            accumulate.execute(backend)?;
+        }
+        Ok(())
+    }
+}
+
+/// Build the RGB halo layer: blur the per-channel mask at every bounce and
+/// accumulate `w_k * strength[c] * blur` into `halo`. The caller owns `halo`
+/// and adds `max(0, halo - mask)` afterwards.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_rgb_halation_state(
+    mask: &[ImagePage],
+    halo: &[ImagePage],
+    width: u32,
+    height: u32,
+    sigma_px: [f32; 3],
+    strength: [f32; 3],
+    n_bounces: u32,
+    bounce_decay: f32,
+    backend: &WgpuBackend,
+) -> Result<Option<RgbHalationState>, String> {
+    let active = n_bounces > 0
+        && strength.iter().any(|&value| value > 0.0)
+        && sigma_px.iter().any(|&value| value > 0.0);
+    if !active {
+        return Ok(None);
+    }
+    let halo = halo.to_vec();
+    let n_pixels = (width as usize) * (height as usize);
+    let mut scratch = GaussianScratch::new(width, height);
+    let GaussianBuffers {
+        intermediate,
+        output,
+    } = scratch.buffers(backend, width, height)?;
+    let mut weights = vec![0.0_f64; n_bounces as usize];
+    for (k, weight) in weights.iter_mut().enumerate() {
+        *weight = f64::from(bounce_decay).powi(k as i32);
+    }
+    let sum: f64 = weights.iter().sum();
+    if sum > 0.0 {
+        for weight in &mut weights {
+            *weight /= sum;
+        }
+    }
+    let mut blurs = Vec::with_capacity(weights.len());
+    let mut accumulate = Vec::with_capacity(weights.len());
+    for (k, &weight) in weights.iter().enumerate() {
+        let sigma: [f64; 3] =
+            std::array::from_fn(|c| (f64::from(sigma_px[c]) * ((k as f64) + 1.0).sqrt()).max(1e-6));
+        let blur = build_grain_blur_paged_with_scratch(
+            backend,
+            width,
+            height,
+            mask,
+            &output,
+            Some(&intermediate),
+            sigma,
+            0,
+            0,
+        )
+        .map_err(|error| format!("rgb halation bounce {k} Gaussian: {error}"))?;
+        let scale = std::array::from_fn(|c| weight as f32 * strength[c]);
+        let accumulate_job = per_channel_job(
+            backend,
+            n_pixels as u32,
+            &output,
+            &halo,
+            scale,
+            k == 0,
+            &format!("rgb_halation_acc_{k}"),
+        )?;
+        blurs.push(blur);
+        accumulate.push(accumulate_job);
+    }
+    Ok(Some(RgbHalationState {
+        _intermediate: intermediate,
+        _output: output,
+        blurs,
+        accumulate,
+    }))
 }
 
 impl HalationState {

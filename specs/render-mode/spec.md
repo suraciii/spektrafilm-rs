@@ -45,7 +45,8 @@ The header MAY identify the active simulation method and active material, LUT, o
 | Film route selector | active | inactive | inactive |
 | Film, Print, and Scan | active | inactive | inactive |
 | Scan Tone & Color | active | inactive | inactive |
-| LUT declaration and LUT Grade | inactive | active | inactive |
+| LUT declaration | inactive | active | inactive |
+| LUT Grade | inactive | active | active (independent) |
 | Effects: Diffusion, RGB Halation, Grain | inactive | active | active |
 | Output color space, encoding, and gamut processing | active | active | active |
 | Output mix and CMYK ink style | active | inactive | inactive |
@@ -54,7 +55,7 @@ Inactive means stored values are retained but MUST NOT be read, prepared, or exe
 
 Effects are independent. Disabling one effect MUST be an exact bypass.
 
-Off with every effect disabled passes the input to output color management without a film, LUT, or grade operation. Off is not monochrome.
+Off with every effect disabled and LUT Grade inactive passes the input to output color management without a film or LUT operation. Off is not monochrome.
 
 Film material effects remain in Film and Print. Effects MUST NOT be duplicated into Off or LUT as film-density controls.
 
@@ -97,7 +98,7 @@ The former `lut_look` group MUST NOT appear in a new document. A one-time migrat
 | --- | --- | --- | --- |
 | Film | film chain, Scan Tone & Color, Output mix, CMYK | film route and profiles | `lut`, `effects`, `grade` |
 | LUT | `lut`, `effects`, `grade` | LUT declaration and active effects or Grade | film chain, Output mix, CMYK |
-| Off | `effects`, output color management | active effects | film chain, `lut`, `grade`, Output mix, CMYK |
+| Off | `effects`, optional `grade`, output color management | active effects or Grade | film chain, `lut`, Output mix, CMYK |
 
 Inactive groups are retained and ignored. An inactive LUT declaration MUST NOT be read or validated. An inactive invalid film, LUT, or effect value MUST NOT be read or validated for the active render.
 
@@ -131,6 +132,6 @@ A rejected mode or preset MUST leave the preceding accepted mode, controls, iden
 
 ## Acceptance
 
-1. Off renders the active effects without a film, LUT, or grade operation; a missing stored LUT file does not block it; output color management still applies.
+1. Off renders the active effects without a film or LUT operation; an active LUT Grade renders independently; a missing stored LUT file does not block it; output color management still applies.
 2. Switching Film, LUT, and Off preserves stored groups, reads no inactive declaration, and creates one undo transaction.
 3. LUT requires a valid declaration; Off does not; active effects and inactive groups follow the validation table.

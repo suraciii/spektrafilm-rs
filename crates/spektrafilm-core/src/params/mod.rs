@@ -19,8 +19,8 @@ pub mod sources;
 
 pub(crate) mod validation;
 pub use crate::lut_look::{
-    EffectsParams, GradeParams, LutDomainPolicy, LutGrainParams, LutLookParams, LutParams,
-    LutShaper, LutSpace, WorkflowMode,
+    EffectsParams, GradeParams, LutDomainPolicy, LutGrainParams, LutHalationParams, LutLookParams,
+    LutParams, LutShaper, LutSpace, WorkflowMode,
 };
 use couplers::DirCouplersParams;
 pub use diffusion::DiffusionFilterParams;
@@ -1708,9 +1708,9 @@ mod tests {
         let legacy = super::LutLookParams {
             path: "look.cube".into(),
             sha256: "a".repeat(64),
-            halation: crate::params::HalationParams {
+            halation: super::LutHalationParams {
                 active: true,
-                ..crate::params::HalationParams::default()
+                ..super::LutHalationParams::default()
             },
             grade: crate::params::FinishingParams {
                 contrast: 0.3,
@@ -1743,9 +1743,9 @@ mod tests {
     #[test]
     fn legacy_lut_look_migration_preserves_explicit_groups() {
         let explicit_effects = super::EffectsParams {
-            halation: crate::params::HalationParams {
+            halation: super::LutHalationParams {
                 active: true,
-                ..crate::params::HalationParams::default()
+                ..super::LutHalationParams::default()
             },
             ..super::EffectsParams::default()
         };

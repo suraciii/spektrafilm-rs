@@ -41,7 +41,9 @@ A Film preset or section preset MUST NOT carry `lut`, `effects`, or `grade`. A L
 
 A look pair declares one Film preset and one RGB preset as two renderings of the same look.
 It is a library relationship, not a preset kind or a serialized document.
+
 Look pairs are built-in only; a user-owned preset MUST NOT declare a pair.
+The RGB side MAY be a built-in Effects preset; no other built-in Effects preset is admitted.
 
 A paired RGB preset MUST carry RGB Halation values calibrated to its Film preset.
 A preset without a pair MUST NOT claim cross-method halation equivalence.
@@ -113,7 +115,7 @@ An Effects preset is a complete preset for the RGB Effects workflow. It carries 
 
 An Effects preset uses preset schema version 9. A version 9 document without an `effects` group or with a `lut`, `grade`, film, or print reference MUST be rejected.
 
-Effects presets are user-owned. Built-in Effects presets are outside this contract.
+Effects presets are user-owned, except for a built-in RGB preset that participates in a declared [look pair](#look-pairs).
 
 Missing effect groups mean all effects off. A saved Effects preset MUST carry every effect group's effective values.
 

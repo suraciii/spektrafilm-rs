@@ -46,7 +46,7 @@ RenderMode
 
 The mode is a top-level dispatch. LUT mode MUST NOT call film exposure, development, print, scan, spectral preparation, or film-grain engines.
 
-Off mode MUST NOT load a LUT file, spectral material, or execute LUT Grade. It executes the Effects stage and output color management.
+Off mode MUST NOT load a LUT file or spectral material. It executes the Effects stage, the independently active LUT Grade, and output color management.
 
 Film mode MUST NOT load an external LUT transform. A LUT transform is not a film profile and MUST NOT populate `film_profile` or `print_profile`.
 
@@ -178,7 +178,7 @@ pub enum EffectPlacement {
 
 The table does not permit sharing a parameter object. Transform effects use their own parameter groups.
 
-Effects are active in LUT and Off. LUT Grade is active only in LUT. Film mode does not execute these groups.
+Effects are active in LUT and Off. LUT Grade is independent of the LUT table and MAY be active in LUT or Off. Film mode does not execute these groups.
 
 ### RGB Halation
 
@@ -228,7 +228,7 @@ The effect MUST be off by default. A LUT that already carries lens character MUS
 
 LUT Grade MUST call the existing finishing response on linear output RGB. It MUST preserve its existing neutral bypass and parameter validation.
 
-LUT Grade MUST be optional and active only in LUT mode. Off MUST bypass it without validating its values. LUT mode MUST NOT add a second tone curve, a second white balance, or a second output transform around it.
+LUT Grade MUST be optional and independent of the LUT table. It MAY be active in LUT mode or Off. LUT mode MUST NOT add a second tone curve, a second white balance, or a second output transform around it.
 
 ### Grain
 
@@ -355,4 +355,4 @@ Adobe XMP and DCP creative profiles are not LUT carriers in this contract. A use
 5. No color space, domain, clamp, or fallback is inferred silently.
 6. The evaluation order is fixed.
 7. Same input, LUT hash, parameters, seed, precision, and backend produce a repeatable result under the compute contract.
-8. Off mode never executes LUT Grade.
+8. Off mode never executes a LUT table; it executes LUT Grade when active.

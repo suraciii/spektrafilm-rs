@@ -37,6 +37,29 @@ See [source declarations](../specs/cli/spec.md#input-declaration) and the [image
 RAW examples retain automatic linear ACES2065-1 declaration.
 See [RAW input](raw.md) for decoding details and [scanning](scanning.md) for negative conversion.
 
+## Multiple exposure and RGB
+
+`--expose` and `--recipe` select a two-to-eight-exposure stack. Film stacks use `--film`; RGB stacks use `--rgb` and may add `--lut`. RGB effects run per exposure, composition adds linear light, and the active LUT, LUT Grade, output transform, and Grain run once. A Film stack resolves one route and one set of RAW, lens, channel-swap, scan-profile, scan-output, and direct-scan options for the whole stack.
+
+```bash
+# Film stack: record exposure sums before development.
+spektrafilm process --film kodak_portra_400 \
+    --expose shot-1.png --expose-ev 0 \
+    --expose shot-2.png --expose-ev -1 \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --backend cpu --data-dir data -o film-stack.png
+
+# RGB stack: per-shot effects, optional LUT, no Film profile.
+spektrafilm process --rgb \
+    --expose shot-1.png --expose shot-2.png \
+    --set effects.halation.active=true \
+    --set grade.active=true \
+    --input-color-space sRGB --input-cctf-decoding true \
+    --backend cpu --data-dir data -o rgb-stack.png
+```
+
+An RGB stack does not require a LUT. A stack with `--lut` and no `--film` also selects RGB. Per-shot `--expose-ev` applies after decoding and before spatial effects; RGB composition clamps negative light but preserves upper headroom. `--dry-run`, `--diagnostics`, and `--timings` describe every exposure and the composition. Recipe schema `spektrafilm.multiple-exposure/2` carries one method group; version 1 loads as Film. See [multiple exposure](../specs/multiple-exposure/spec.md) and [CLI](../specs/cli/spec.md#multiple-exposure).
+
 ## Material stage input and output
 
 `--route` selects whether the primary output is an image or one resumable material state. A route ending at `film` or `print` writes a self-contained directory with a `stage.json` manifest and native density payloads; `.sfstage` is the recommended suffix. A route ending at `scan` writes an ordinary image. The destination extension never chooses the operations.
@@ -166,7 +189,7 @@ It checks the input path and supported file kind.
 Image decoding and compute-adapter availability remain unchecked.
 Saving color flags control writer conversion independently of scanner `io.output_color_space` and `io.output_cctf_encoding`.
 
-Use `--lut` to run one external `.cube` as the LUT workflow. The command reads the cube title, domain, shaper, and hash; input and output spaces default to display-encoded sRGB, and the domain policy defaults to clamp. A `.cube` file carries no color-space metadata, so confirm those spaces when the source declares something else. `--set lut.input_space=...`, `--set lut.output_space=...`, and `--set lut.domain_policy=fail` change the declaration. `--set workflow.mode=off` selects Off without a LUT or grade; use `--set effects.diffusion.active=true` and the other canonical `effects.*` or `grade.*` leaves to author it. The retired `lut_look` group is migrated in complete legacy documents but is rejected as a new sparse edit. `--lut` conflicts with preset selection, `--film`, `--paper`, route selection, `--scan-film`, and feature profiles. An explicit `workflow.mode=film` edit with `--lut` fails instead of selecting a workflow silently. A LUT or Effects preset selects its own mode; mixing either with a film look or section preset is rejected.
+Use `--lut` to run one external `.cube` as the LUT workflow. The command reads the cube title, domain, shaper, and hash; input and output spaces default to display-encoded sRGB, and the domain policy defaults to clamp. A `.cube` file carries no color-space metadata, so confirm those spaces when the source declares something else. `--set lut.input_space=...`, `--set lut.output_space=...`, and `--set lut.domain_policy=fail` change the declaration. `--set workflow.mode=off` selects Off without a LUT; use `--set effects.diffusion.active=true` and the other canonical `effects.*` or `grade.*` leaves to author Effects and LUT Grade independently. The retired `lut_look` group is migrated in complete legacy documents but is rejected as a new sparse edit. `--lut` conflicts with preset selection, `--film`, `--paper`, route selection, `--scan-film`, and feature profiles. An explicit `workflow.mode=film` edit with `--lut` fails instead of selecting a workflow silently. A LUT or Effects preset selects its own mode; mixing either with a film look or section preset is rejected.
 
 ```bash
 ./target/release/spektrafilm process input.png -o out.tif     --lut look.cube --input-color-space sRGB --input-cctf-decoding true     --dry-run --dry-run-format text --data-dir data
