@@ -25,7 +25,9 @@ Effect type follows input.
 
 Film and RGB Halation are not pixel-identical.
 They share one spatial response and one visual target.
-Given the declared reference fixture and each model's calibrated parameters, the RGB halo MUST match the Film halo in extent, amplitude, and hue.
+
+A built-in look pair MAY claim visual equivalence only after passing the declared reference fixture.
+A pair without a measured pass MUST label itself experimental and MUST NOT claim equivalence.
 
 Visual equivalence is evaluated after the display transform on the halo difference between halation on and off.
 It is defined for the RGB before-LUT position.
@@ -134,5 +136,5 @@ An inactive scheme MUST retain its stored values and MUST NOT be read or validat
 1. Film mode executes Film Halation; LUT and Off execute RGB Halation.
 2. RGB Halation preserves red and blue source hue and increases with source level above the low threshold and below the high protection range.
 3. Film and RGB Halation parameters remain independent; neither scheme reads the other scheme's fields.
-4. The RGB halo matches the Film halo in extent, amplitude, and hue on the reference fixture.
+4. A built-in pair that claims equivalence passes the reference fixture in extent, amplitude, and hue; other pairs remain experimental.
 5. A zero Film spatial scale produces no halation response and no renormalization.

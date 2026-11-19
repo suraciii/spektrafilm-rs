@@ -45,7 +45,8 @@ It is a library relationship, not a preset kind or a serialized document.
 Look pairs are built-in only; a user-owned preset MUST NOT declare a pair.
 The RGB side MAY be a built-in Effects preset; no other built-in Effects preset is admitted.
 
-A paired RGB preset MUST carry RGB Halation values calibrated to its Film preset.
+A paired RGB preset MAY carry RGB Halation values calibrated to its Film preset.
+A pair MUST NOT claim cross-method equivalence without a measured fixture pass.
 A preset without a pair MUST NOT claim cross-method halation equivalence.
 
 A built-in look pair MUST share one stable pair identity across both presets.
