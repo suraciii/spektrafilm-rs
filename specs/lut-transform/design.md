@@ -90,6 +90,12 @@ Diffusion models lens scatter; RGB Halation models a highlight-scatter appearanc
 
 RGB Halation sees linear light before the LUT. Grain sees final output encoding, so it is independent of LUT contrast.
 
+### Multiple exposure stage split
+
+The pre-LUT effect stage MUST be separable from the LUT stage.
+RGB Multiple Exposure runs the effect stage per exposure and the LUT stage once after composition.
+The effect stage owns Diffusion and RGB Halation; the LUT stage owns the shaper, LUT, LUT Grade, output gamut, output encoding, and Grain.
+
 ## LUT stage
 
 ### Declaration

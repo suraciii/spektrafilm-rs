@@ -74,6 +74,14 @@ The original `--params` decoder MUST remain the legacy baseline decoder. A recur
 
 RenderRecipe MUST remain the structured render contract. The resolution report MUST NOT change recipe normalization, seed ownership, or parameter-digest computation. GUI persistence MUST follow the [preset state compatibility rules](../presets/spec.md#gui-state-compatibility).
 
+## Multiple exposure recipe
+
+The version 2 recipe carries the shared fields and one method group.
+Film reuses the version 1 film, paper, metering, and print fields.
+
+RGB carries the resolved LUT look, including LUT, LUT Grade, and Effects.
+Version 1 loads as Film without field rewriting.
+
 ## Source declarations and execution context
 - The CLI MUST retain supplied input leaves separately from decoded baseline values. This distinction permits legacy files to declare source color without changing their calibration ownership.
 - Dedicated input flags MUST use the same typed field validation as `--set`; they MUST NOT create a second color-space registry or an input-conversion algorithm. The RAW adapter MUST remain the authority for RAW sample color.
