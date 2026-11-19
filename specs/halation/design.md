@@ -119,6 +119,9 @@ H_c = s_c\,(G_\sigma * m_c),
 
 where `s_c` is the per-channel strength and `G_sigma` is the shared kernel.
 
+The RGB model MAY use a two-scale Gaussian approximation of the Film multi-bounce response.
+The approximation MUST be fitted to the Film response and verified on the reference fixture.
+
 The model MUST NOT renormalize the result.
 
 The model adds:
@@ -151,6 +154,7 @@ Grain, diffusion, light leak, and LUT-grade changes are inactive.
 
 Visual equivalence means the two halos have the same spatial extent, the same hue direction, and no perceptible difference in peak or integrated amplitude at the reference viewing size.
 The reference viewing size is the fixture at 100% display scale.
+The target applies to the before-LUT RGB position; the after-LUT position is a separate appearance.
 
 The RGB model matches the reference by calibrating its mask thresholds and per-channel strengths.
 The calibration MUST use the declared reference fixture.

@@ -28,6 +28,9 @@ They share one spatial response and one visual target.
 Given the declared reference fixture and each model's calibrated parameters, the RGB halo MUST match the Film halo in extent, amplitude, and hue.
 
 Visual equivalence is evaluated after the display transform on the halo difference between halation on and off.
+It is defined for the RGB before-LUT position.
+
+The after-LUT position is a separate appearance and carries no equivalence claim.
 Pixel equality, spectral equality, and density equality are outside the target and MUST NOT be claimed.
 
 Film Halation is the visual reference.

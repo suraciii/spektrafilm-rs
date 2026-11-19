@@ -189,6 +189,9 @@ The effect parameter group is `LutHalationParams`.
 
 The canonical effect-order values are `before_lut` and `after_lut`. The default is `before_lut`.
 
+`before_lut` is the position for the Film visual-equivalence target.
+`after_lut` is a separate appearance and carries no equivalence claim.
+
 ```rust
 pub enum HalationEffectOrder {
     BeforeLut,
