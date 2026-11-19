@@ -168,7 +168,7 @@ Ordinary Grain browsing MUST place Enable grain and Engine first. It MUST show t
 
 Dye MUST expose Grain strength, Dye grain size, and Inter-record grain separation as its numerical grain editors. Grain strength 0 MUST remove random grain, including residual count noise; 1 MUST keep the delivered rendering.
 
-Dye grain size 1 MUST keep the delivered correlation length; larger values MUST scale the film-coordinate delivered base, every active layer's relative cell, and the positive microcontrast cell by the same factor. Its tooltip MUST state that aperture-integrated granularity can change and that it is not output-pixel size or a tone shift.
+Dye grain size 1 MUST keep the delivered coarse correlation length; larger values MUST scale the film-coordinate coarse base and every active layer's relative cell. The positive microcontrast cell MUST stay fixed at 9 µm. Its tooltip MUST state that aperture-integrated granularity can change and that it is not output-pixel size or a tone shift.
 
 Inter-record grain separation 0 MUST share one field across the color records; 1 MUST give each record its own field. The editor displays the stored `dye_color_grain` value directly, and `0.75` MUST remain the default. Its tooltip MUST state that higher separation makes RGB grain more distinct and more chromatic.
 

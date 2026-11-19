@@ -35,8 +35,9 @@ pub struct DyeGrainParams {
     /// Relative delivered-law grain amplitude from the recipe. `1.0` keeps
     /// the delivered law; `0.0` realizes the target without random grain.
     pub dye_strength: f64,
-    /// Relative correlation length. `1.0` keeps the polarity's delivered
-    /// base cell; larger values scale the base, layer ladder, and fine cell.
+    /// Relative coarse correlation length. `1.0` keeps the polarity's
+    /// delivered base cell; larger values scale the base and layer ladder.
+    /// The positive microcontrast cell stays fixed.
     pub dye_size: f64,
     /// Relative separation of the three color records' grain fields.
     /// `0.0` shares the field; `1.0` gives each record its own. This maps to

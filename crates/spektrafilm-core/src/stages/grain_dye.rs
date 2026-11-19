@@ -994,7 +994,12 @@ fn law_params(resolved: &DyeGrainParams) -> texture::DyeLawParams {
         1.0
     } * resolved.dye_size;
     params.fine_scale = if resolved.positive {
-        spektrafilm_backend::dye_params::law::POSITIVE_FINE_SCALE
+        // Express the fixed 9 µm microcontrast cell as a ratio of the coarse
+        // cell. The coarse cell scales with `dye_size`; the fine cell does not.
+        spektrafilm_backend::dye_params::law::POSITIVE_FINE_UM
+            / (spektrafilm_backend::dye_params::law::VALUE_BASE_UM
+                * POSITIVE_BASE_SCALE
+                * resolved.dye_size)
     } else {
         0.0
     };
@@ -2683,6 +2688,13 @@ mod tests {
                         < 1e-12,
                     "{stock} layer {layer} lost the positive microcontrast"
                 );
+                let fine_um = spektrafilm_backend::dye_params::law::VALUE_BASE_UM
+                    * law.length_scale
+                    * law.fine_scale;
+                assert!(
+                    (fine_um - spektrafilm_backend::dye_params::law::POSITIVE_FINE_UM).abs() < 1e-9,
+                    "{stock} layer {layer} fine cell {fine_um} µm"
+                );
             }
         }
 
@@ -2698,8 +2710,9 @@ mod tests {
         );
     }
 
-    /// The relative size scales the delivered base, layer ladder, and fine
-    /// cell together. The device handoff receives the same mapped scale.
+    /// The relative size scales the coarse delivered base and layer ladder;
+    /// the positive microcontrast cell stays fixed. The device handoff receives
+    /// the same mapped scales.
     #[test]
     fn dye_size_scales_correlation_length_on_both_handoffs() {
         let grid = ReadoutGrid {
@@ -2715,7 +2728,7 @@ mod tests {
             } else {
                 1.0
             };
-            for size in [1.0, 2.0, 4.0] {
+            for size in [1.0, 2.0, 4.0, 8.0, 10.0, 16.0] {
                 let mut params = supported_params();
                 params.film_render.grain.dye_size = size;
                 let resolved = resolve(&film, &params).unwrap();
@@ -2733,6 +2746,18 @@ mod tests {
                         "{stock} size {size} layer {layer} did not scale its ladder"
                     );
                 }
+                let fine_um = spektrafilm_backend::dye_params::law::VALUE_BASE_UM
+                    * law.length_scale
+                    * law.fine_scale;
+                if film.is_positive() {
+                    assert!(
+                        (fine_um - spektrafilm_backend::dye_params::law::POSITIVE_FINE_UM).abs()
+                            < 1e-9,
+                        "{stock} size {size} moved the fine cell to {fine_um} µm"
+                    );
+                } else {
+                    assert_eq!(law.fine_weight, 0.0, "{stock} size {size}");
+                }
                 let device = device_params_with_law(
                     3.5,
                     grid,
@@ -2746,6 +2771,17 @@ mod tests {
                     (device.length_scale - base * size).abs() < 1e-12,
                     "{stock} size {size} did not reach the device handoff"
                 );
+                if film.is_positive() {
+                    let device_fine_um = spektrafilm_backend::dye_params::law::VALUE_BASE_UM
+                        * device.length_scale
+                        * device.fine_scale;
+                    assert!(
+                        (device_fine_um - spektrafilm_backend::dye_params::law::POSITIVE_FINE_UM)
+                            .abs()
+                            < 1e-9,
+                        "{stock} size {size} device fine cell {device_fine_um} µm"
+                    );
+                }
             }
         }
     }

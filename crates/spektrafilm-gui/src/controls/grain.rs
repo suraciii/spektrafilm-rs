@@ -510,7 +510,7 @@ fn engine_controls(
                 filter,
                 dye_size,
                 "Dye grain size (relative)",
-                "Relative Dye grain size in film coordinates: 1 keeps the delivered correlation length; larger values scale the base, layer, and microcontrast cells together. At a fixed aperture, aperture-integrated granularity can change; this is not a tone shift, crystal diameter, scanner blur, or output-pixel size."
+                "Relative Dye grain size in film coordinates: 1 keeps the delivered coarse correlation length; larger values scale the coarse base and each active layer's relative cell. The positive microcontrast cell stays fixed at 9 µm. At a fixed aperture, aperture-integrated granularity can change; this is not a tone shift, crystal diameter, scanner blur, or output-pixel size."
             );
             changed |= number!(
                 ui,

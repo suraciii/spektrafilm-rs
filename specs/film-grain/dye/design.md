@@ -4,9 +4,9 @@
 
 Dye realizes developed film record density as a coordinate-addressed value-noise field whose amplitude follows a granularity curve derived from development statistics.
 
-The delivered base cell is polarity-dependent: negative profiles use 14.0 µm, and positive profiles use 7.0 µm at relative size `1`. The public `dye_size` control scales that base, every active layer's relative cell, and the positive microcontrast cell together.
+The delivered base cell is polarity-dependent: negative profiles use 14.0 µm, and positive profiles use 7.0 µm at relative size `1`. The public `dye_size` control scales that coarse base and every active layer's relative cell; it does not scale the positive microcontrast cell.
 
-Positive profiles keep that base on every density layer and add a 3.85 µm microcontrast lattice at 35% field variance. The finer positive structure keeps visible grain from collapsing into a low-frequency density cloud without returning to subpixel noise.
+Positive profiles keep that base on every density layer and add a fixed 9.0 µm microcontrast lattice at 60% field variance. The second scale keeps visible grain from collapsing into a pure low-frequency density cloud without returning to subpixel noise.
 
 Positive profiles also carry twice the delivered field and count amplitude at the same public strength. Their direct-scan density-to-encoded contrast maps the same density modulation to a smaller encoded contrast than a print scan.
 
@@ -22,9 +22,9 @@ The field lives on the film lattice. The readout resamples it: finer grids inter
 
 **Delivered base cell**: the base value-noise cell at relative size `1`. Negative profiles deliver 14.0 µm; positive profiles deliver 7.0 µm. It is engine data, not an absolute user control.
 
-The public `dye_size` control scales it and every relative cell derived from it.
+The public `dye_size` control scales the coarse cell and the per-layer coarse cells. It does not scale the fixed positive microcontrast cell.
 
-**Microcontrast field**: an independent value-noise lattice mixed into the field by variance. Positive profiles deliver a relative cell of 0.55 and a variance fraction of 0.35; negative profiles deliver zero weight. The mixture keeps unit variance.
+**Microcontrast field**: an independent value-noise lattice mixed into the field by variance. Positive profiles deliver a fixed 9.0 µm cell and a variance fraction of 0.60; negative profiles deliver zero weight. The mixture keeps unit variance.
 
 **Density layer**: one of the profile's one to three emulsion layers. Its raw layer curve supplies a relative share, normalized pointwise so the layer targets sum to the developed record target. A small non-monotonic toe in the measured composite curve is flattened to a monotone envelope before inversion.
 
@@ -82,7 +82,7 @@ The asymptotic zero is `dmax_l,c / uniformity`, above the sampled curve peak. Th
 
 A profile whose layer curves under-sum its composite axis can over-normalize one layer target past its sampled peak. The taper then clamps at `peak / uniformity`, so that layer's correlated field is zero in the band. The count term preserves `E[D] = t`; certification MUST record the affected band as a profile-data limit, not a second grain law.
 
-`cell_base` is 14.0 µm for negative profiles and 7.0 µm for positive profiles. The public relative size `k` scales the delivered lattice: `cell = k * cell_base`. The positive microcontrast uses `w = 0.35` at `0.55 * cell`; negative profiles use `w = 0`.
+`cell_base` is 14.0 µm for negative profiles and 7.0 µm for positive profiles. The public relative size `k` scales the coarse delivered lattice: `cell = k * cell_base`. The positive microcontrast uses `w = 0.60` at a fixed `9.0 µm`; negative profiles use `w = 0`.
 
 Both components have unit variance, so `u_base` has unit variance and the existing law is unchanged. The profile layer curves do not reorder those delivered bases.
 
@@ -92,21 +92,21 @@ Fog keeps the event rate alive at clear base. It is a density baseline, not a le
 
 ## Grain-size control
 
-Let `k` be the public grain size in `[1, 4]` and `a_cell` the polarity's delivered base cell (`14.0 µm` for negative, `7.0 µm` for positive). The size maps as:
+Let `k` be the public grain size in `[1, 16]` and `a_cell` the polarity's delivered base cell (`14.0 µm` for negative, `7.0 µm` for positive). The size maps as:
 
 ```text
 cell      = k * a_cell
-fine_cell = 0.55 * cell
+fine_cell = 9.0 µm
 cell_l    = k * ladder_l * a_cell
 ```
 
-`ladder_l` is the active layer's engine-owned relative cell (`1.0`, `0.5`, `0.3` for negative profiles; `1.0` for positive profiles). `k = 1` leaves the delivered lattice unchanged.
+`ladder_l` is the active layer's engine-owned relative cell (`1.0`, `0.5`, `0.3` for negative profiles; `1.0` for positive profiles). `k = 1` leaves the delivered coarse lattice unchanged; the positive microcontrast cell stays `9.0 µm` at every `k`.
 
 The control MUST preserve `E[D] = t`, the per-sample field variance, the event area, the strength mapping, the record coupling, and every field and count stream.
 
 The realization can differ because the value-noise lattice is addressed at the mapped cell size; that is a changed lattice, not a reseed. At a fixed seed and aperture, the larger correlation length can change aperture-integrated granularity and perceived grain. It MUST NOT be described as a tone shift.
 
-The effective cell MUST be finite and positive. Public values outside `[1, 4]` MUST fail before allocation. The delivered absolute base remains engine data; `k` is a relative film-coordinate control, not a crystal diameter, scanner blur, or output-pixel size.
+The effective cell MUST be finite and positive. Public values outside `[1, 16]` MUST fail before allocation. The delivered absolute base remains engine data; `k` is a relative film-coordinate control, not a crystal diameter, scanner blur, or output-pixel size.
 
 ## Strength controls
 
@@ -143,9 +143,9 @@ Changing `c` MUST NOT change the shared or per-record mean; it changes their cov
 
 ## Field construction
 
-One smoothstep-interpolated value-noise lattice uses a delivered base cell size of 14.0 µm for negative profiles and 7.0 µm for positive profiles at relative size `1`. The public `dye_size` scales every cell derived from that base. The field is multiplied by one fixed scale that makes it unit variance.
+One smoothstep-interpolated value-noise lattice uses a delivered coarse base cell size of 14.0 µm for negative profiles and 7.0 µm for positive profiles at relative size `1`. The public `dye_size` scales the coarse base and layer ladder; the positive microcontrast cell stays fixed at 9.0 µm. The field is multiplied by one fixed scale that makes it unit variance.
 
-Positive profiles mix a second independent lattice at 0.55 times the cell size and 35% of the variance; negative profiles use one lattice.
+Positive profiles mix a second independent lattice at a fixed 9.0 µm and 60% of the variance; negative profiles use one lattice. The second lattice does not move with `dye_size`.
 
 The profile's density layers carry the multi-layer structure instead of an octave stack. Negative profiles use relative cell sizes 1.0, 0.5, and 0.3 of the base.
 
@@ -155,7 +155,7 @@ On a 1:1 crop from a 35 mm frame at a 3.66 µm source pitch, the negative base p
 
 The positive base places one cell every 1.9 source pixels. Its adjacent-sample correlation is about 0.45–0.5 at lag 1 and near zero by lag 2. The positive texture is visibly finer while keeping a coherent cell above one source pixel at the delivered scale.
 
-The microcontrast cell is 1.05 source pixels at the reference pitch. At 35% variance it sharpens the field without replacing the base as the dominant correlation length.
+The microcontrast cell is 2.46 source pixels at the reference pitch. At 60% variance it supplies the fixed fine scale; at large `dye_size` it does not replace the coarse base as the dominant correlation length. At the smallest size its 9.0 µm cell overlaps the 7.0 µm coarse cell by design, because `dye_size` no longer moves the fine component.
 
 A cell size that would put every source pixel on one lattice phase is nudged by 1.37% before evaluation, so amplitude does not step when geometry lands on that aliasing case.
 
@@ -253,12 +253,13 @@ No module MAY duplicate another module's film chemistry, optical measurement, pa
 Implementation MUST proceed in gates:
 
 1. Prove the density law and its mean on deterministic targets, including clear base, mid densities, and saturation.
-2. Prove the field construction: layer-target sum, two-component field variance, polarity-selected base and microcontrast cells, and coordinate-addressed layer streams on both executors. The delivered positive field MUST report its adjacent-sample correlation lags and remain above the subpixel-noise case at the 35 mm 1:1 reference geometry with a 3.66 µm source pitch.
-3. Prove readout: fractional overlap, constant preservation, and impulse and edge response against an independent oracle.
-4. Prove crop, tile, band, and stage-split invariance and resource rejection without allocating an oversized request.
-5. Prove the optical measurement oracle on synthetic constant and varying fields, including transmission positivity, kernel normalization, density ordering, wavelength integration, and receiver/aperture changes.
-6. Produce per-stock or per-profile calibration records with fit and holdout separation.
-7. Validate CPU f32/f64, usable hardware GPU, actual CLI and GUI Scan/Export paths, and photographic references only after the preceding gates pass.
+2. Prove the field construction: layer-target sum, two-component field variance, polarity-selected base and microcontrast cells, and coordinate-addressed layer streams on both executors.
+3. Report the delivered positive field's adjacent-sample correlation lags and keep it above the subpixel-noise case at the 35 mm 1:1 reference geometry with a 3.66 µm source pitch. Report the fixed positive microcontrast cell separately from the size-scaled coarse cells.
+4. Prove readout: fractional overlap, constant preservation, and impulse and edge response against an independent oracle.
+5. Prove crop, tile, band, and stage-split invariance and resource rejection without allocating an oversized request.
+6. Prove the optical measurement oracle on synthetic constant and varying fields, including transmission positivity, kernel normalization, density ordering, wavelength integration, and receiver/aperture changes.
+7. Produce per-stock or per-profile calibration records with fit and holdout separation.
+8. Validate CPU f32/f64, usable hardware GPU, actual CLI and GUI Scan/Export paths, and photographic references only after the preceding gates pass.
 
 Each gate MUST publish its inputs, algorithm revision, precision, seed population, output hashes or measurements, and pass/fail result. A local probe, one stock, one seed, one crop, or a software GPU adapter MUST NOT be presented as universal algorithm or photographic acceptance.
 

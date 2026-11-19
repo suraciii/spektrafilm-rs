@@ -1520,12 +1520,12 @@ mod tests {
                 "unexpected error for {value}: {error}"
             );
         }
-        for value in [1.0, 2.0, 4.0] {
+        for value in [1.0, 2.0, 4.0, 8.0, 10.0, 16.0] {
             let mut ok = params.clone();
             ok.film_render.grain.dye_size = value;
             ok.validate().unwrap();
         }
-        for value in [0.5, 0.0, -0.1, 4.1, f64::NAN, f64::INFINITY] {
+        for value in [0.5, 0.0, -0.1, 16.1, f64::NAN, f64::INFINITY] {
             let mut bad = params.clone();
             bad.film_render.grain.dye_size = value;
             let error = bad.validate().unwrap_err();

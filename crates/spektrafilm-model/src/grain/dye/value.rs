@@ -79,7 +79,7 @@ pub(crate) fn field(
     field_one(w, h, pitch_um, scale, seed, stream)
 }
 
-/// One unit-variance field with an optional finer microcontrast component.
+/// One unit-variance field with an optional microcontrast component.
 /// The two components are independent and mixed by variance: the base keeps
 /// `1 - fine_weight`, the fine component carries `fine_weight`.
 #[allow(clippy::too_many_arguments)]
