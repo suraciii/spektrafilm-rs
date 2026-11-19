@@ -83,7 +83,7 @@ impl WgpuBackend {
         )?;
         make_mask.execute(self)?;
 
-        if let Some(state) = super::halation::build_rgb_halation_state(
+        let Some(state) = super::halation::build_rgb_halation_state(
             &mask,
             &halo,
             img.width,
@@ -93,9 +93,11 @@ impl WgpuBackend {
             params.n_bounces,
             params.bounce_decay,
             self,
-        )? {
-            state.submit(self)?;
-        }
+        )?
+        else {
+            return Ok(img.clone());
+        };
+        state.submit(self)?;
 
         let add = pointwise_job(
             self,

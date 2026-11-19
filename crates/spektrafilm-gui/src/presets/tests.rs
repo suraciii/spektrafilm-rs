@@ -966,6 +966,31 @@ fn effects_preset_switches_to_off_and_preserves_stored_transform_groups() {
 }
 
 #[test]
+fn browser_search_matches_the_rgb_halation_effect_name() {
+    let (mut app, directory) = test_app("rgb-halation-search");
+    let mut effects = spektrafilm_core::lut_look::EffectsParams::default();
+    effects.halation.active = true;
+    let preset = Preset::capture_effects("Color study", effects, provenance());
+    app.presets
+        .library
+        .save_new(&preset, &app.data_dir)
+        .unwrap();
+    app.presets.refresh();
+    for query in ["rgb", "rgb halation"] {
+        app.presets.query = query.into();
+        app.presets.update_search(&app.films, &app.papers);
+        assert!(
+            app.presets
+                .visible_indices()
+                .iter()
+                .any(|index| app.presets.entries[*index].name == "Color study"),
+            "{query}"
+        );
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn lut_preset_switches_workflow_and_manual_switch_restores_film_route() {
     let (mut app, directory) = test_app("lut-preset");
     let lut_path = directory.join("identity.cube");

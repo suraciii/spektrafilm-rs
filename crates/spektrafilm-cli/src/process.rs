@@ -631,6 +631,7 @@ pub fn run(mut args: ProcessArgs, command_matches: &ArgMatches) -> Result<()> {
         return crate::multiple_exposure::run(&args, &data);
     }
     reject_multiple_only_flags(&args)?;
+    reject_rgb_film_flags(&args)?;
     if args.input.is_none() {
         bail!("input image is required unless --expose or --recipe is used");
     }
@@ -662,6 +663,25 @@ fn reject_multiple_only_flags(args: &ProcessArgs) -> Result<()> {
         || args.preview_max_size != 1024
     {
         bail!("multiple-exposure flags require --expose or --recipe");
+    }
+    Ok(())
+}
+
+fn reject_rgb_film_flags(args: &ProcessArgs) -> Result<()> {
+    if args.rgb
+        && (args.film.is_some()
+            || args.paper.is_some()
+            || !args.preset.is_empty()
+            || args.scan_film
+            || args.workflow.route.is_some()
+            || args.workflow.scan_output.is_some()
+            || args.workflow.scan_profile.is_some()
+            || args.workflow.film_channel_swap != "none"
+            || args.workflow.print_channel_swap != "none")
+    {
+        bail!(
+            "--rgb selects the RGB track and does not accept Film selectors, route, scan output, scan profile, or channel swap"
+        );
     }
     Ok(())
 }
