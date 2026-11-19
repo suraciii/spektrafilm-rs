@@ -76,7 +76,7 @@ _Avoid_: Chart group
 
 **Patch window**: The declared rectangular area of one grid patch used for visual inspection. It may cover the patch or a smaller central area, but it does not include an inferred correspondence to another set.
 
-**Render mode**: The exclusive processing path selected from Film, LUT, or Off. Film is a spectral simulation; LUT and Off are RGB simulations. It selects which stages execute; inactive stages retain stored values.
+**Render mode**: The exclusive processing path selected from Film, LUT, or Off. It selects which stages execute; inactive stages retain stored values.
 _Avoid_: Look, color source, page
 
 **Simulation method**: The way a film simulation computes the film look: Spectral or RGB. It is derived from the active render mode, not selected independently.
@@ -139,7 +139,7 @@ _Avoid_: Film grade, baked LUT grade
 **LUT stage**: The inspector stage that owns the LUT declaration, strength, import actions, and LUT Grade. It is not a physical film-chain stage.
 _Avoid_: Film density, camera profile
 
-**Effects stage**: The inspector stage that owns Diffusion, Halation, and Grain for LUT and Off. It is not a film material stage or a render mode.
+**Effects stage**: The inspector stage that owns Diffusion, RGB Halation, and Grain for LUT and Off. It is not a film material stage or a render mode.
 _Avoid_: Global effects, film grain, LUT mode
 
 **Preset thumbnail**: A small rendering of the current photograph with a candidate preset, used to compare presets without changing accepted adjustments. It is not a reference sample or the retained Preview result.

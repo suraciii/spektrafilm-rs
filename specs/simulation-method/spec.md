@@ -39,15 +39,10 @@ RGB does not name the output format; a Spectral simulation also outputs RGB.
 - Method is derived from the active render mode.
 - `workflow.mode` remains `film`, `lut`, or `off`.
 - The product MUST NOT add a fourth render mode.
-- The product MUST NOT present RGB as a color space or as a color-only adjustment.
 
 ## Presentation
 
-The GUI MUST present the active method as **Spectral** or **RGB**.
-
-The GUI MUST present the RGB workflow as **LUT** or **Effects**.
-
-The GUI MUST label halation as **Film Halation** or **RGB Halation** under [Halation models](../halation/spec.md).
+Visible labels follow [GUI language](../gui-language/spec.md#simulation-method-and-halation-labels).
 
 A method label MUST NOT change `workflow.mode`.
 

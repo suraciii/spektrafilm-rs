@@ -7,7 +7,7 @@
 | This capability | Film, LUT, and Off modes; mode selection and switching; stage activation; the canonical `workflow.mode` value; inactive-value retention. |
 | [Simulation methods](../simulation-method/spec.md) | Spectral and RGB method language, method labels, and method mapping. |
 | [Halation models](../halation/spec.md) | Film Halation and RGB Halation model distinction. |
-| [LUT transform](../lut-transform/spec.md) | LUT declaration, validation, evaluation order, and the independent Diffusion, Halation, and Grain effects. |
+| [LUT transform](../lut-transform/spec.md) | LUT declaration, validation, evaluation order, and the independent Diffusion, RGB Halation, and Grain effects. |
 | [LUT workflow](../lut-workflow/spec.md) | LUT file export and import, LUT presets, and the LUT-stage actions. |
 | [Presets](../presets/spec.md) | Preset kinds, library behavior, and mode selection through preset application. |
 | [GUI workflow](../gui-workflow/spec.md) | Mode-selector placement, stage ownership, and inspector behavior. |
@@ -19,7 +19,7 @@ A **render mode** is Film, LUT, or Off. Exactly one mode is active.
 
 Film executes the spectral film chain. LUT executes the external LUT transform and its effects. Off executes neither film nor LUT; it runs the Effects stage and output color management.
 
-The active mode determines the simulation method under [Simulation methods](../simulation-method/spec.md): Film is Spectral; LUT and Off are RGB.
+The active mode determines the simulation method under [Simulation methods](../simulation-method/spec.md).
 
 The mode selector presents the simulation method and RGB workflow under [Simulation methods](../simulation-method/spec.md). The canonical mode values remain `film`, `lut`, and `off`; the selector MUST NOT add a fourth mode. It is a global control above the stage list, not a stage and not part of the stage jump strip.
 

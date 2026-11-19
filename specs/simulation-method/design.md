@@ -22,12 +22,7 @@ workflow.mode
 
 ## Preset mapping
 
-| Preset kind | Method | Render mode |
-| --- | --- | --- |
-| Film preset | Spectral | Film |
-| LUT preset | RGB | LUT |
-| Effects preset | RGB | Off |
-| Section preset | Spectral | Film |
+Preset kinds and their method mapping follow [Presets](../presets/spec.md#contract).
 
 ## Invariants
 

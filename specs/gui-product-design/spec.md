@@ -49,7 +49,7 @@ Preview MUST update automatically under the [workflow contract](../gui-workflow/
 
 Delivery emphasis follows [Result identity and delivery guidance](../gui-workflow/spec.md#result-identity-and-delivery-guidance).
 
-The inspector MUST present Input and capture, Film, Print, Scan, LUT, Effects, and Output in that order. A persistent Mode selector above the stages offers Film, LUT, and Off; it is not a stage.
+The inspector MUST present Input and capture, Film, Print, Scan, LUT, Effects, and Output in that order. A persistent Mode selector above the stages offers Spectral and RGB; RGB exposes the LUT and Effects workflows. It is not a stage.
 
 A stage jump strip MUST reveal and scroll to the corresponding heading in the same inspector. It MUST NOT switch between mutually exclusive pages and MUST NOT include the Mode selector.
 
@@ -150,7 +150,7 @@ The label and help MUST distinguish linear flash exposure from camera EV and mai
 
 Camera diffusion belongs to Input and capture. Enlarger diffusion belongs to Print. Print viewing glare belongs to Scan.
 
-Halation, these two diffusion stages, and viewing glare MUST NOT be combined into one Bloom or Glow module.
+Film Halation, these two diffusion stages, and viewing glare MUST NOT be combined into one Bloom or Glow module.
 
 The grain selector MUST keep all supported engines and their full parameter sets. Their shared location MUST NOT imply a common processing domain. Unselected engine values remain discoverable and retained; actual editability follows engine and feature-profile conditions.
 
@@ -192,7 +192,7 @@ The HTML design reference is not an engine implementation. Its sample values, pa
 | Search an Export or display option | The result opens that dialog or setting; unrelated dialogs are not filtered by the inspector query. |
 | Use Only modified, reset a module, then undo | Filtering uses the reset baseline; reset changes only the module's owned scope; undo restores values and edit provenance. |
 | Drag a slider through several intermediate values | Its number updates consistently; the completed gesture creates one undo step. |
-| Apply a Halation profile; edit an RGB component | Only the feature profile's declared scope changes; the direct edit remains available and profile identity is recomputed. |
+| Apply a Film Halation profile; edit an RGB component | Only the feature profile's declared scope changes; the direct edit remains available and profile identity is recomputed. |
 | Set Preflash exposure and Y/M shifts; set exposure to zero | Flash stops while both filter values remain; a route without printing marks the group inactive without clearing it. |
 | Switch grain engines, then return | Every engine retains its controls; conditions and domains remain explicit; no generic slider replaces model controls. |
 | Save after changing viewer presentation; run independent Export | Save retains its input pixels and Export uses its captured full-resolution configuration; neither consumes a viewer raster. |

@@ -83,7 +83,7 @@ Off mode MUST use the same order with steps 4 through 8 as exact bypasses:
 7. Publish output.
 ```
 
-RGB Halation MUST run at exactly one declared position: before the LUT or after the LUT. The default is before the LUT.
+RGB Halation MUST run at exactly one declared position: before the LUT or after the LUT. The default follows [Halation models](../halation/spec.md#rgb-halation).
 
 Diffusion models lens scatter; RGB Halation models a highlight-scatter appearance. Diffusion therefore precedes RGB Halation.
 
@@ -165,7 +165,7 @@ pub enum EffectPlacement {
 | Effect | Placement | Working domain | Shared implementation | Independent semantics |
 | --- | --- | --- | --- | --- |
 | Diffusion | PreLut | Linear scene RGB | Camera diffusion PSF/models | No film or print stage |
-| RGB Halation | PreLut or PostLut | Linear scene or LUT-output RGB | PSF primitive | Maximum-channel mask, per-channel amplitude, positive difference, no film density |
+| RGB Halation | PreLut or PostLut | Linear scene or LUT-output RGB | Shared PSF primitive | RGB model; no film density |
 | LUT Grade | PostLut | Linear output RGB / Oklab | `finishing` | Optional, LUT-independent |
 | Grain | OutputEncoding | Encoded output RGB | Noise/hash primitive | Appearance grain, no film density or RMS |
 
@@ -175,35 +175,11 @@ Effects are active in LUT and Off. LUT Grade is active only in LUT. Film mode do
 
 ### RGB Halation
 
-RGB Halation MUST build a maximum-channel highlight mask in linear light.
+RGB Halation follows [Halation model design](../halation/design.md#rgb-halation-model).
 
-The maximum channel is:
+The LUT transform owns its stage placement and effect-order control.
 
-\[
-M(x)=\max(R(x),G(x),B(x)).
-\]
-
-The gate is:
-
-\[
-g(x)=\operatorname{smoothstep}(low,low+t,M(x))\,(1-\operatorname{smoothstep}(high+t,high+2t,M(x))).
-\]
-
-The per-channel mask is:
-
-\[
-m_c(x)=g(x)\,\frac{\max(0,I_c(x)-low)}{1-low}.
-\]
-
-Here `low` is the low threshold, `high` is the high threshold, `t` is the transition, `I_c` is the input channel, and `G` is the declared spatial kernel.
-
-The halo is `H_c = G_\sigma * m_c`. The effect adds `\max(0,H_c-m_c)` to `I_c`.
-
-The implementation MUST preserve source hue and per-channel amplitude. It MUST NOT use luminance alone as the mask source.
-
-The implementation MUST NOT read film exposure, record density, or a film profile.
-
-The PSF primitive is shared with Film Halation. The mask, per-channel amplitude, and effect order MUST remain RGB-specific.
+The effect parameter group is `LutHalationParams`.
 
 `LutHalationParams` is the wire type for RGB Halation; the domain term is RGB Halation.
 

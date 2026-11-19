@@ -98,7 +98,7 @@ input
 - Diffusion MUST evaluate in linear light before RGB Halation.
 - RGB Halation MUST evaluate in linear light.
 - RGB Halation MUST run at exactly one declared position: before the LUT or after the LUT.
-- The default position MUST be before the LUT.
+- The default position follows [Halation models](../halation/spec.md#rgb-halation).
 - The LUT MUST remain pointwise.
 - LUT Grade MUST follow the LUT.
 - Output gamut MUST follow the LUT or LUT Grade.
@@ -118,16 +118,15 @@ An effect MUST NOT be encoded in the LUT. A 3D LUT is pointwise and cannot carry
 
 ### RGB Halation
 
-RGB Halation MUST use a linear-light maximum-channel highlight mask and a declared spatial response. It MUST preserve source hue and per-channel amplitude. It MUST NOT read film density, film exposure, or a film profile.
+RGB Halation runs at its declared effect order under [Halation models](../halation/spec.md#rgb-halation).
 
-The effect MUST expose mask low, high, and transition values, a mask source, a spatial response, an intensity, and an effect order. The mask source MUST select highlights by the maximum channel.
+It MUST evaluate in linear light.
 
-The effect MUST add only the positive difference between the spatial response and the mask. It MUST NOT darken the RGB input.
+It MUST NOT read film density, film exposure, or a film profile.
 
-The effect order MUST be before the LUT or after the LUT. The default order MUST be before the LUT.
+The LUT stage owns the effect-order control and the stage placement.
 
-A saturated red source MUST produce a red halation. A saturated blue source MUST produce a blue halation. Above the low threshold and below the high protection range, the added halation MUST increase with source level.
-
+The effect parameter group MUST expose mask low, high, transition, mask source, spatial response, intensity, and effect order.
 
 ### Diffusion
 

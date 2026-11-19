@@ -4,102 +4,112 @@
 
 | Capability | Owns |
 | --- | --- |
-| This capability | Film Halation and RGB Halation model distinction; input classification; shared spatial response; effect order language. |
-| [Film chain](../film-chain/spec.md) | Film Halation placement, source response, scatter, highlight reconstruction, and renormalization. |
-| [LUT transform](../lut-transform/spec.md) | RGB Halation placement, highlight mask, positive-difference add, and effect order. |
+| This capability | The Film Halation and RGB Halation schemes; the shared spatial response; effect-order language. |
+| [Film chain](../film-chain/spec.md) | Film Halation stage placement, film source response, and parameter storage. |
+| [LUT transform](../lut-transform/spec.md) | RGB Halation stage placement, effect-order control, and parameter storage. |
 | [Render modes](../render-mode/spec.md) | Mode activation. |
 | [GUI workflow](../gui-workflow/spec.md) | Control inventory and stage ownership. |
 | [Presets](../presets/spec.md) | Preset ownership and capture. |
 
 ## Scope
 
-Two halation models exist: **Film Halation** and **RGB Halation**.
+Two halation schemes exist: **Film Halation** and **RGB Halation**.
 
 They share one spatial response.
 
 They do not share input preparation, masks, output composition, or parameter values.
 
-## Model contract
-
-| Model | Input | Highlight mask | Output composition | Parameter owner |
-| --- | --- | --- | --- | --- |
-| Film Halation | Film Input | None | Add to film input; optional renormalization | Film chain |
-| RGB Halation | RGB Input | Maximum-channel highlight mask | Positive difference added to RGB input | LUT transform |
-
-A **Film Input** is the simulated linear film raw exposure inside a spectral simulation.
-
-An **RGB Input** is the rendered RGB image inside an RGB simulation.
-
 Effect type follows input.
 
-Film Halation MUST NOT use an RGB highlight mask.
+## Shared contract
 
-RGB Halation MUST NOT read film density, film exposure, or a film profile.
+| Scheme | Input | Highlight mask | Output composition |
+| --- | --- | --- | --- |
+| Film Halation | Film Input | None | Add to film input; optional renormalization |
+| RGB Halation | RGB Input | Maximum-channel highlight mask | Positive difference added to RGB input |
+
+Film Input and RGB Input follow [CONTEXT.md](../../CONTEXT.md#language).
 
 Film and RGB halation parameters MUST NOT be interchangeable.
 
-The spatial response MUST have one implementation.
-
 ## Film Halation
 
-Film Halation runs on the film input before development and scan.
+### Input
 
-It MAY include in-emulsion scatter, highlight reconstruction, and renormalization.
+Film Halation reads the Film Input.
 
-Its first sigma and strength are per-channel film-plane values.
+The Film Input is not camera RAW.
 
-Its highlight reconstruction fields MUST NOT serve as RGB mask thresholds.
+### Behavior
+
+- Film Halation runs before development and scan.
+- It MAY include in-emulsion scatter, highlight reconstruction, and renormalization.
+- Its first sigma and strength are per-channel film-plane values.
+- It MUST NOT use an RGB highlight mask.
+- Its highlight reconstruction fields MUST NOT serve as RGB mask thresholds.
+
+### Parameters
+
+Film Halation owns film-plane sigma, bounces, decay, strength, scatter, highlight reconstruction, and renormalization.
+
+[Film chain](../film-chain/spec.md#film-halation-source-response) owns the parameter names, units, and source-response behavior.
+
+### Constraints
+
+- Film Halation MUST NOT read the RGB Input.
+- Film Halation MUST NOT read RGB mask thresholds.
 
 ## RGB Halation
 
-RGB Halation runs on the RGB input.
+### Input
 
-It MUST select highlights by the maximum channel of the RGB input.
+RGB Halation reads the RGB Input.
 
-It MUST scale each channel by that channel's source amplitude.
+### Behavior
 
-A saturated red source MUST produce a red halation.
+- RGB Halation selects highlights by the maximum channel of the RGB Input.
+- It scales each channel by that channel's source amplitude.
+- The mask MUST preserve source hue.
+- A saturated red source MUST produce a red halation.
+- A saturated blue source MUST produce a blue halation.
+- Above the low threshold and below the high protection range, the added halation MUST increase with source level.
+- The effect MUST add only the positive difference between the spatial response and the mask.
+- The effect MUST NOT darken the RGB Input.
+- RGB Halation MAY run before or after the LUT.
+- The effect order MUST be explicit.
+- The default order MUST be before the LUT.
 
-A saturated blue source MUST produce a blue halation.
+### Parameters
 
-The mask MUST preserve source hue.
+RGB Halation owns mask low, high, transition, mask source, RGB spatial response, strength, opacity, and effect order.
 
-Above the low threshold and below the high protection range, the added halation MUST increase with source level.
+[LUT transform](../lut-transform/spec.md#rgb-halation) owns the parameter names, storage, and stage placement.
 
-The effect MUST add only the positive difference between the spatial response and the mask.
+### Constraints
 
-The effect MUST NOT darken the RGB input.
-
-RGB Halation MAY run before or after the LUT.
-
-The effect order MUST be explicit.
-
-The default order MUST be before the LUT.
+- RGB Halation MUST NOT read film density, film exposure, or a film profile.
+- RGB Halation MUST NOT use a luminance-only mask.
 
 ## Activation
 
-| Render mode | Active halation model |
+| Render mode | Active halation scheme |
 | --- | --- |
 | Film | Film Halation |
 | LUT | RGB Halation |
 | Off | RGB Halation |
 
-A spectral output that enters an RGB workflow carries RGB input; the RGB stage executes RGB Halation.
+A spectral output that enters an RGB workflow carries RGB Input; the RGB stage executes RGB Halation.
 
-A chained spectral-to-RGB workflow MAY execute both models in stage order.
+A chained spectral-to-RGB workflow MAY execute both schemes in stage order.
 
 ## Parameter separation
 
-Film Halation owns film-plane sigma, bounces, decay, strength, scatter, highlight reconstruction, and renormalization.
+A shared parameter MUST NOT change both schemes.
 
-RGB Halation owns mask low, high, transition, mask source, RGB spatial response, strength, opacity, and effect order.
-
-A shared parameter MUST NOT change both models.
-
-An inactive model MUST retain its stored values and MUST NOT be read or validated.
+An inactive scheme MUST retain its stored values and MUST NOT be read or validated.
 
 ## Acceptance
 
-1. Film mode executes Film Halation; LUT and Off execute RGB Halation; a chained workflow executes both in stage order.
+1. Film mode executes Film Halation; LUT and Off execute RGB Halation; a chained workflow executes both schemes in stage order.
 2. RGB Halation preserves red and blue source hue and increases with source level above the low threshold and below the high protection range.
-3. Film and RGB halation parameters remain independent; neither model reads the other model's fields.
+3. Film and RGB halation parameters remain independent; neither scheme reads the other scheme's fields.
