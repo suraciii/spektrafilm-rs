@@ -4,7 +4,7 @@
 
 | Capability | Owns |
 | --- | --- |
-| This capability | Spectral and RGB method language; method mapping to render modes; method labels. |
+| This capability | Spectral and RGB method language; method mapping to render modes. |
 | [Render modes](../render-mode/spec.md) | Film, LUT, and Off activation; stored-mode values; switching and inactive-value retention. |
 | [Film chain](../film-chain/spec.md) | Spectral simulation behavior. |
 | [LUT transform](../lut-transform/spec.md) | RGB simulation behavior. |
@@ -42,7 +42,7 @@ RGB does not name the output format; a Spectral simulation also outputs RGB.
 
 ## Effect tracks
 
-- Every effect capability MUST declare one [effect track](../../CONTEXT.md#language): shared, dual-track, or single-track.
+- A new or changed effect capability MUST declare one [effect track](../../CONTEXT.md#language): shared, dual-track, or single-track.
 - A shared model runs in both methods and MUST declare its input-domain mapping.
 - A dual-track capability MUST define separate input, parameters, and output composition for each method.
 - A single-track capability MUST state why the other method has no counterpart.

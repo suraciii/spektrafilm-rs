@@ -5,12 +5,12 @@
 | Capability | Owns |
 | --- | --- |
 | This capability | Film, LUT, and Off modes; mode selection and switching; stage activation; the canonical `workflow.mode` value; inactive-value retention. |
-| [Simulation methods](../simulation-method/spec.md) | Spectral and RGB method language, method labels, and method mapping. |
+| [Simulation methods](../simulation-method/spec.md) | Spectral and RGB method language and method mapping. |
 | [Halation models](../halation/spec.md) | Film Halation and RGB Halation model distinction. |
 | [LUT transform](../lut-transform/spec.md) | LUT declaration, validation, evaluation order, and the independent Diffusion, RGB Halation, and Grain effects. |
 | [LUT workflow](../lut-workflow/spec.md) | LUT file export and import, LUT presets, and the LUT-stage actions. |
 | [Presets](../presets/spec.md) | Preset kinds, library behavior, and mode selection through preset application. |
-| [GUI workflow](../gui-workflow/spec.md) | Mode-selector placement, stage ownership, and inspector behavior. |
+| [GUI workflow](../gui-workflow/spec.md) | Simulation-method selector placement, stage ownership, and inspector behavior. |
 | [CLI](../cli/spec.md) | Command syntax and canonical parameter discovery. |
 
 ## Contract
@@ -21,9 +21,17 @@ Film executes the spectral film chain. LUT executes the external LUT transform a
 
 The active mode determines the simulation method under [Simulation methods](../simulation-method/spec.md).
 
-The mode selector presents the simulation method and RGB workflow under [Simulation methods](../simulation-method/spec.md). The canonical mode values remain `film`, `lut`, and `off`; the selector MUST NOT add a fourth mode. It is a global control above the stage list, not a stage and not part of the stage jump strip.
+The global selector presents the simulation method and RGB workflow.
 
-The header MAY identify the active mode and active material, LUT, or Effects context as read-only information. It MUST NOT provide a second mode editor.
+- [Simulation methods](../simulation-method/spec.md) owns the mapping.
+- [GUI workflow](../gui-workflow/spec.md#stage-and-surface-ownership) owns placement.
+- [GUI language](../gui-language/spec.md#simulation-method-and-halation-labels) owns labels.
+
+The canonical mode values remain `film`, `lut`, and `off`; the selector MUST NOT add a fourth mode.
+
+The selector is a global control above the stage list, not a stage and not part of the stage jump strip.
+
+The header MAY identify the active simulation method and active material, LUT, or Effects context as read-only information. It MUST NOT provide a second method editor.
 
 ## Activation
 
@@ -49,6 +57,8 @@ Film material effects remain in Film and Print. Effects MUST NOT be duplicated i
 
 ## Selection and switching
 
+The GUI presents these transitions as Spectral, RGB LUT, and RGB Effects. The table names the canonical mode.
+
 | Action | Result |
 | --- | --- |
 | Select Film | The active mode becomes Film. Stored LUT, Grade, and Effects values are preserved. |
@@ -58,15 +68,15 @@ Film material effects remain in Film and Print. Effects MUST NOT be duplicated i
 
 A destination mode MUST validate its active groups before the mode becomes active.
 
-A manual mode switch is one adjustment-history transaction. It MUST clear the applied-preset identity and MUST NOT prepare stages inactive in the destination mode.
+A manual method switch is one adjustment-history transaction. It MUST clear the applied-preset identity and MUST NOT prepare stages inactive in the destination mode.
 
 Entering Film or Off MUST NOT read a LUT file. Entering LUT or Off MUST NOT read spectral material.
 
-A mode switch preserves every stored group. It MUST NOT reset an inactive film, LUT, Grade, or Effects value.
+A method switch preserves every stored group. It MUST NOT reset an inactive film, LUT, Grade, or Effects value.
 
 Applying a preset selects the mode its kind requires in the same transaction. A preset document MUST NOT carry a separate mode field.
 
-A failed mode switch preserves the preceding mode, controls, applied identity, and retained image.
+A failed method switch preserves the preceding mode, controls, applied identity, and retained image.
 
 ## Parameter language
 

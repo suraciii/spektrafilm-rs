@@ -8,7 +8,7 @@ This specification defines the photo-first desktop workspace and its user flows.
 
 The GUI MUST reduce navigation and editing effort without removing supported photographic controls. It MUST NOT replace independent parameters with a generic effect-strength slider. Folding a module MUST change its presentation only.
 
-This target replaces the MAIN, FILM, PRINT, ADVANCED, and CONFIG page navigation with a stage inspector and separate application settings. It preserves existing Film-mode spectral behavior, validation, and Save and Export pixel semantics. Render-mode dispatch, LUT and Effects carriers, and their preset schemas follow [Render modes](../render-mode/spec.md), [LUT workflow](../lut-workflow/spec.md), and [Presets](../presets/spec.md).
+This target replaces the MAIN, FILM, PRINT, ADVANCED, and CONFIG page navigation with a stage inspector and separate application settings. It preserves existing Spectral film behavior, validation, and Save and Export pixel semantics. Render-mode dispatch, LUT and Effects carriers, and their preset schemas follow [Render modes](../render-mode/spec.md), [LUT workflow](../lut-workflow/spec.md), and [Presets](../presets/spec.md).
 
 ## Capability map
 
@@ -16,7 +16,7 @@ The GUI MUST support this photographic work without requiring a second basic/exp
 
 ```mermaid
 flowchart LR
-    O[Open photograph] --> S[Choose a preset or mode]
+    O[Open photograph] --> S[Choose a preset or method]
     S --> E[Refine adjustments]
     E --> C[Compare presets and adjustments]
     C --> D[Inspect and deliver]
@@ -41,7 +41,7 @@ These are target capabilities, not a statement of implementation. Delivery sched
 
 The workspace MUST keep three regions: a collapsible preset browser on the left, the retained-image viewer in the center, and the adjustment inspector on the right. The image MUST remain visible while a person chooses a preset or edits a photographic parameter.
 
-The header MUST expose Open image, Undo, Redo, application settings, and independent Export. It MUST identify the current source, mode, and the Film material pair, LUT context, or Effects context appropriate to that mode. Those summaries outside the inspector MUST be read-only.
+The header MUST expose Open image, Undo, Redo, application settings, and independent Export. It MUST identify the current source, simulation method, and the Film material pair, LUT context, or Effects context appropriate to that method. Those summaries outside the inspector MUST be read-only.
 
 Status ownership follows [Labels and surfaces](../gui-workflow/spec.md#labels-and-surfaces).
 
@@ -49,13 +49,13 @@ Preview MUST update automatically under the [workflow contract](../gui-workflow/
 
 Delivery emphasis follows [Result identity and delivery guidance](../gui-workflow/spec.md#result-identity-and-delivery-guidance).
 
-The inspector MUST present Input and capture, Film, Print, Scan, LUT, Effects, and Output in that order. A persistent Mode selector above the stages offers Spectral and RGB; RGB exposes the LUT and Effects workflows. It is not a stage.
+The inspector MUST present Input and capture, Film, Print, Scan, LUT, Effects, and Output in that order. A persistent Simulation method selector above the stages offers Spectral and RGB; RGB exposes the LUT and Effects workflows. It is not a stage.
 
-A stage jump strip MUST reveal and scroll to the corresponding heading in the same inspector. It MUST NOT switch between mutually exclusive pages and MUST NOT include the Mode selector.
+A stage jump strip MUST reveal and scroll to the corresponding heading in the same inspector. It MUST NOT switch between mutually exclusive pages and MUST NOT include the Simulation method selector.
 
-The seven stage headings MUST remain reachable in every mode. An inactive stage MUST keep its heading visible with an explanation, MUST retain its stored values, and MUST present its body disabled and collapsed by default.
+The seven stage headings MUST remain reachable in every method. An inactive stage MUST keep its heading visible with an explanation, MUST retain its stored values, and MUST present its body disabled and collapsed by default.
 
-In LUT and Off modes, Film, Print, and Scan remain inspectable in the stored film chain. In Film mode, the LUT and Effects stages remain reachable while inactive. In Off mode, the LUT stage is inactive and the Effects stage is active.
+In RGB, Film, Print, and Scan remain inspectable in the stored film chain. In Spectral, the LUT and Effects stages remain reachable while inactive. In RGB LUT, both LUT and Effects stages are active; in RGB Effects, the LUT stage is inactive and the Effects stage is active.
 
 Several stages and modules MUST be able to remain open together.
 
@@ -69,18 +69,18 @@ Neither surface MUST become a destination for photographic controls merely becau
 
 ## User flows
 
-### Open and establish the mode
+### Open and establish the method
 
 1. Open image MUST accept the supported RGB and RAW formats through their existing import paths. A supported drop MUST enter the same import operation.
-2. A successful import MUST show the accepted source and its current mode. Failure MUST preserve the accepted image and controls and report the error.
+2. A successful import MUST show the accepted source and its current method. Failure MUST preserve the accepted image and controls and report the error.
 3. A person MUST be able to choose a preset from the left browser or choose materials directly in their stages. Choosing a preset MUST NOT be required to edit a photograph.
 4. The person can adjust exposure in Input and capture before opening other modules.
 
 RAW decoding and reprocessing MUST remain distinguishable from simulated camera exposure. Changing a RAW setting MUST NOT imply that an accepted source has already been decoded with that setting. The reprocess action and its pending or failed state MUST be explicit.
 
-### Choose a preset, mode, or material
+### Choose a preset, method, or material
 
-A Film preset selects the material pair and its owned controls under [Presets](../presets/spec.md#apply). A LUT preset selects LUT mode. An Effects preset selects Off mode.
+A Film preset selects the material pair and its owned controls under [Presets](../presets/spec.md#apply). A LUT preset selects RGB LUT. An Effects preset selects RGB Effects.
 
 The browser MUST support search and distinguish applied, modified, and missing states.
 
@@ -92,7 +92,7 @@ The header MUST identify any resulting route or scanner normalization.
 
 A material selector MUST list only materials accepted for its role. Development-time choices MUST come from the selected material's family. A material without a selectable family MUST show its effective state without a one-choice selector.
 
-A feature profile and a preset MUST remain distinct operations. A feature profile MUST NOT change materials, mode, enable state, or unrelated controls. Multi-photograph copying scopes follow [Photograph work](photo-work/spec.md#copy-adjustments).
+A feature profile and a preset MUST remain distinct operations. A feature profile MUST NOT change materials, method, enable state, or unrelated controls. Multi-photograph copying scopes follow [Photograph work](photo-work/spec.md#copy-adjustments).
 
 ### Refine the photograph
 

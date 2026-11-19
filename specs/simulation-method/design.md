@@ -31,4 +31,3 @@ Preset kinds and their method mapping follow [Presets](../presets/spec.md#contra
 3. The product adds no fourth render mode.
 4. A method label does not change a serialized mode value.
 5. Inactive branches are not read, validated, or executed.
-6. A chained spectral-to-RGB workflow runs one method per stage.

@@ -88,19 +88,19 @@ _Avoid_: Film mode
 **RGB simulation**: A film simulation that computes the film look directly in RGB, including color transforms and film effects. RGB names the computation and input domain, not the output format; a spectral simulation also outputs RGB.
 _Avoid_: RGB mode, color-only simulation, LUT mode
 
-**Film input**: The simulated linear film raw exposure inside a spectral simulation. It is not camera RAW.
+**Film Input**: The simulated linear film raw exposure inside a spectral simulation. It is not camera RAW.
 _Avoid_: Camera RAW, film density
 
-**RGB input**: The rendered RGB image inside an RGB simulation.
-_Avoid_: Film input, scene input
+**RGB Input**: The rendered RGB image inside an RGB simulation.
+_Avoid_: Film Input, scene input
 
-**Film halation**: Halation applied to the film input before development and scan.
+**Film Halation**: Halation applied to the Film Input before development and scan.
 _Avoid_: In-simulation halation, pre-look halation
 
-**RGB halation**: Halation applied to the RGB input through a maximum-channel highlight mask.
+**RGB Halation**: Halation applied to the RGB Input through a maximum-channel highlight mask.
 _Avoid_: Look halation, LUT halation, image halation
 
-**Halation kernel**: The shared spatial point-spread response used by film halation and RGB halation. It is not a render mode, input, or effect model.
+**Halation kernel**: The shared spatial point-spread response used by Film Halation and RGB Halation. It is not a render mode, input, or effect model.
 _Avoid_: Halation mode
 
 **Effect order**: The position of an RGB film effect relative to the LUT: before the look or after the look. It is a parameter, not an effect model.

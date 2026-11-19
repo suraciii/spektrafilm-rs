@@ -10,12 +10,12 @@ A **film preset** selects film and print profiles and their visual simulation co
 
 A **section preset** carries exactly one film-preset section. Reusable combinations of controls that are already preset-owned belong in the existing film, LUT, Effects, or section preset. A preset is not a complete GUI state, an input image, a viewer state, an export configuration, a LUT pixel payload, a calibration profile, or an arbitrary film route.
 
-| Preset kind | Method |
-| --- | --- |
-| Film preset | Spectral |
-| LUT preset | RGB LUT |
-| Effects preset | RGB Effects |
-| Section preset | Spectral |
+| Preset kind | Method | Look source |
+| --- | --- | --- |
+| Film preset | Spectral | Film chain |
+| LUT preset | RGB | LUT |
+| Effects preset | RGB | Identity |
+| Section preset | Spectral | Film chain |
 
 [Simulation methods](../simulation-method/spec.md) owns the method mapping.
 
@@ -95,7 +95,7 @@ Preset export and import move only the preset document; the LUT file is external
 
 ### Effects presets
 
-An Effects preset is a complete preset for Off mode. It carries the `effects` root and its Diffusion, Halation, and Grain groups. It carries no LUT declaration, LUT Grade, or film or print profile reference.
+An Effects preset is a complete preset for Off mode. It carries the `effects` root and its Diffusion, RGB Halation, and Grain groups. It carries no LUT declaration, LUT Grade, or film or print profile reference.
 
 An Effects preset uses preset schema version 9. A version 9 document without an `effects` group or with a `lut`, `grade`, film, or print reference MUST be rejected.
 
@@ -282,7 +282,7 @@ Selecting a film MUST refresh unowned stock-derived leaves from the selected fil
 | --- | --- |
 | Grain | `rms_granularity`, `density_min`, `uniformity`, `particle_scale_sublayers` |
 | DIR couplers | `gamma_samelayer_rgb`, `gamma_interlayer_r_to_gb`, `gamma_interlayer_g_to_rb`, `gamma_interlayer_b_to_rg` |
-| Halation | `halation_first_sigma_um`, `halation_strength` |
+| Film Halation | `halation_first_sigma_um`, `halation_strength` |
 
 Explicitly owned leaves MUST retain their values, even when equal to the previous film's default. Each vector is one atomic leaf; ownership MUST NOT be inferred separately for its components.
 
@@ -298,7 +298,7 @@ Legacy baseline preparation MUST retain its existing initialization policy under
 
 This section describes film preset and section ownership. LUT preset ownership follows [LUT presets](#lut-presets).
 
-A film preset owns film and print selection plus explicit film, print, enlarger, diffusion, halation, coupler, grain, base, chemistry, scanner, CMYK ink style, and output-mix controls. The scanner controls it owns are `scanner.scan_output`, `scanner.white_reference`, `scanner.conversion_style`, `scanner.operator`, `scanner.scan_profile`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Viewing glare ownership is limited to effective `print_render.glare`; the non-effective `film_render.glare` group is not preset-owned.
+A film preset owns film and print selection plus explicit film, print, enlarger, diffusion, Film Halation, coupler, grain, base, chemistry, scanner, CMYK ink style, and output-mix controls. The scanner controls it owns are `scanner.scan_output`, `scanner.white_reference`, `scanner.conversion_style`, `scanner.operator`, `scanner.scan_profile`, `scanner.lens_blur`, and `scanner.unsharp_mask`. Viewing glare ownership is limited to effective `print_render.glare`; the non-effective `film_render.glare` group is not preset-owned.
 
 Neutral enlarger filter anchors are calibration baselines, not preset controls, and are not preset-owned. Existing material controls and `output_mix` follow [Output mix and material controls](../output-mix/spec.md). A section preset owns exactly the controls of its section.
 

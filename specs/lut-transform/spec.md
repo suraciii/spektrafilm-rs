@@ -112,7 +112,7 @@ The runtime root is `effects`. Its `diffusion`, `halation`, and `grain` groups a
 
 The canonical effect switch paths are `effects.<effect>.active`. Enabling or disabling one effect MUST NOT change another effect's stored values or the LUT declaration.
 
-The Effects stage is active in LUT and Off. It uses the same effect definitions and values in both modes. Film mode MUST NOT execute these effects; film material effects remain in Film and Print.
+The Effects stage is active in RGB and inactive in Spectral. It uses the same effect definitions and values in both RGB workflows. Spectral MUST NOT execute these effects; film material effects remain in Film and Print.
 
 An effect MUST NOT be encoded in the LUT. A 3D LUT is pointwise and cannot carry a spatial radius, a grain field, or a highlight mask.
 
@@ -126,7 +126,7 @@ It MUST NOT read film density, film exposure, or a film profile.
 
 The LUT stage owns the effect-order control and the stage placement.
 
-The effect parameter group MUST expose mask low, high, transition, mask source, spatial response, intensity, and effect order.
+The effect parameter group MUST expose mask low, high, transition, spatial response, per-channel strength, and effect order.
 
 ### Diffusion
 
@@ -156,17 +156,17 @@ The product MUST provide a neutral gray ramp and a color-checker preview for an 
 
 ## UI and CLI
 
-[Render modes](../render-mode/spec.md) owns the global Film / LUT / Off selector. This capability owns the LUT stage and the Effects stage content.
+[Render modes](../render-mode/spec.md) owns mode selection; [Simulation methods](../simulation-method/spec.md) owns method mapping; [GUI workflow](../gui-workflow/spec.md#stage-and-surface-ownership) owns selector placement. This capability owns the LUT stage and the Effects stage content.
 
 The LUT stage MUST expose LUT import, the declared input and output spaces, the domain, the domain policy, the shaper, LUT strength, and LUT Grade.
 
-The Effects stage MUST expose independent Diffusion, RGB Halation, and Grain controls. It MUST be active in LUT and Off and inactive in Film.
+The Effects stage MUST expose independent Diffusion, RGB Halation, and Grain controls. It MUST be active in RGB and inactive in Spectral.
 
 The LUT stage MUST show all three domain axes. When a clamp render reports clipped pixels, the LUT stage MUST show a persistent warning with the clipped percentage. The warning MUST NOT depend on hovering a truncated header status.
 
 A new LUT import MUST default to strength one with every effect inactive. A replacement cube preserves the existing strength, Effects, and LUT Grade values under the [LUT workflow](../lut-workflow/spec.md#import-lut).
 
-The UI MUST label the feature as a non-spectral LUT. It MUST NOT present a LUT as a film profile or a measured stock.
+The UI MUST label the feature as a LUT. It MUST NOT present a LUT as a film profile or a measured stock.
 
 The CLI MUST expose the mode, LUT declaration, Effects, and LUT Grade through its canonical parameter language. Exact flags and option names belong to the [CLI contract](../cli/spec.md).
 

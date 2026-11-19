@@ -9,7 +9,7 @@ Halation kernel
 ├── Film Halation model
 │   ├── input: Film Input
 │   ├── no highlight mask
-│   ├── optional scatter, highlight reconstruction, renormalization
+│   ├── optional scatter, highlight reconstruction, source compression, renormalization
 │   └── output: modified Film Input
 └── RGB Halation model
     ├── input: RGB Input
@@ -23,9 +23,11 @@ Halation kernel
 
 The shared kernel owns the spatial response.
 
-The response is a multi-bounce Gaussian sum with per-channel sigma, strength, bounce count, decay, and source compression.
+The response is a multi-bounce Gaussian sum with per-channel sigma, bounce count, and decay.
 
-The kernel MUST NOT own input masks, output composition, or parameter names.
+Each model supplies its own per-channel strength.
+
+The kernel MUST NOT own input masks, output composition, strength, or parameter names.
 
 ## Film Halation model
 
@@ -33,7 +35,7 @@ The Film Halation model owns input preparation and output composition for the Fi
 
 It applies the shared spatial response to the whole Film Input.
 
-It MAY apply in-emulsion scatter and highlight reconstruction before the response.
+It MAY apply in-emulsion scatter, highlight reconstruction, and source compression before the response.
 
 It adds the response to the Film Input.
 
@@ -72,8 +74,10 @@ Here `low` is the low threshold, `high` is the high threshold, `t` is the transi
 The halo is:
 
 \[
-H_c = G_\sigma * m_c.
+H_c = s_c\,(G_\sigma * m_c),
 \]
+
+where `s_c` is the per-channel strength.
 
 The model adds:
 
@@ -114,6 +118,7 @@ The [LUT transform](../lut-transform/spec.md#rgb-halation) owns the parameter na
 | RGB Halation | RGB Input | Maximum-channel | RGB Input | Film density, film exposure, film profile |
 
 - `FilmHalationParams` and `RgbHalationParams` MUST be separate types.
+- `LutHalationParams` is the RGB wire type and MUST NOT carry film-only fields.
 - A shared `HalationParams` MUST NOT carry fields for both schemes.
 - `boost_ev`, `boost_range`, and `protect_ev` belong to Film Halation highlight reconstruction.
 - `mask_low`, `mask_high`, and `mask_transition` belong to RGB Halation.

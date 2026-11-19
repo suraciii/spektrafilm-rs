@@ -8,7 +8,7 @@ The feature profile resolver owns family identifiers, built-in catalog entries, 
 
 The CLI parser owns option syntax but MUST call the shared resolver.
 
-The current catalog covers Procedural grain and Halation. Dye has no feature-profile catalog in this algorithm revision. A future Dye appearance profile requires its own scope, parameter record, calibration evidence, and product specification.
+The current catalog covers Procedural grain and Film Halation. Dye has no feature-profile catalog in this algorithm revision. A future Dye appearance profile requires its own scope, parameter record, calibration evidence, and product specification.
 
 ## Options considered
 
@@ -68,7 +68,7 @@ HalationProfileValues {
 
 `custom` is not a catalog row with defaults. It means that the caller keeps or explicitly exposes the current scoped values. Procedural uses its existing custom operation.
 
-Halation derives `custom` by exact comparison and leaves its scoped values unchanged.
+Film Halation derives `custom` by exact comparison and leaves its scoped values unchanged.
 
 ## Resolution invariants
 
@@ -91,11 +91,11 @@ Applying a named row MUST preserve the existing `procedural_profile` behavior: t
 
 The family is narrower than all Procedural controls. Cluster, color, timer, and mode controls are algorithm controls, not standard format/speed profile leaves.
 
-### Halation
+### Film Halation
 
 The existing `HALATION_PROFILES` entries are the single baseline source for the table. If the table cannot be called from the resolver without widening unrelated visibility, the implementation MUST move it to one crate-private typed owner. A second literal table MUST NOT be created.
 
-The Halation profile scope excludes `active` and scatter, boost, source-compression, bounce, and renormalization controls. A profile selection MUST NOT change whether the effect runs or present an appearance baseline as a complete material calibration.
+The Film Halation profile scope excludes `active` and scatter, boost, source-compression, bounce, and renormalization controls. A profile selection MUST NOT change whether the effect runs or present an appearance baseline as a complete material calibration.
 
 Selection identity MUST NOT permit a tolerance.
 
@@ -118,7 +118,7 @@ Direct leaves remain allowed after selection. The dry-run report MUST show the p
 
 ## GUI composition
 
-The selector is a projection of current parameter values plus an action. It MUST NOT add a second persisted identity for Halation. Procedural's existing `procedural_profile` remains persisted because it is already a public runtime selector.
+The selector is a projection of current parameter values plus an action. It MUST NOT add a second persisted identity for Film Halation. Procedural's existing `procedural_profile` remains persisted because it is already a public runtime selector.
 
 The GUI control writes through the same typed resolver as the CLI. It MUST validate the candidate before updating state, invalidating render state, and scheduling preview. A disabled selector MUST retain its value and display the applicability reason.
 
@@ -126,7 +126,7 @@ The GUI control writes through the same typed resolver as the CLI. It MUST valid
 
 Feature-profile selection is not serialized as a new top-level or nested field. A saved preset or section contains resolved runtime leaves under its existing schema. A document MUST NOT require a catalog entry because it stores leaves rather than feature-profile names.
 
-The existing Procedural `procedural_profile` wire behavior remains authoritative for that engine. Halation documents continue to carry their resolved arrays. Catalog changes require an explicit product revision and MUST NOT silently reinterpret stored resolved values.
+The existing Procedural `procedural_profile` wire behavior remains authoritative for that engine. Film Halation documents continue to carry their resolved arrays. Catalog changes require an explicit product revision and MUST NOT silently reinterpret stored resolved values.
 
 ## Verification design
 
@@ -134,9 +134,9 @@ The implementation MUST add focused tests for:
 
 - family-local name validation and catalog counts;
 - every Procedural row resolving to the existing dispatch values;
-- every Halation row resolving to its exact arrays;
+- every Film Halation row resolving to its exact arrays;
 - scope isolation with sentinels for active, engine, render mode, film type, film route, seed, film format, and unrelated controls;
-- `custom` matching and non-matching behavior for Halation, with no tolerance;
+- `custom` matching and non-matching behavior for Film Halation, with no tolerance;
 - CLI option composition, repeated-family precedence, malformed values, dry-run reporting, and direct-leaf override;
 - round-trip through existing preset and parameter carriers without a feature-profile field.
 

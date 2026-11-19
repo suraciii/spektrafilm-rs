@@ -272,7 +272,7 @@ The panel MUST use these labels under [image analysis](../gui-product-design/ima
 | Outside selection | 选区外 |
 | Pixel sample | 像素取样 |
 
-Mode help MUST name the photographic judgment from the owning capability rather than require prior knowledge of the instrument. Image-analysis RGB analysis MUST NOT be labeled Spectrum or Spectral analysis; the simulation-method label Spectral is separate.
+Method help MUST name the photographic judgment from the owning capability rather than require prior knowledge of the instrument. Image analysis of RGB data MUST NOT be labeled Spectrum or Spectral analysis; the simulation-method label Spectral is separate.
 
 Select area MUST remain distinct from the normal viewer select-to-zoom gesture. Hints MUST identify the temporary analysis tool while it is armed.
 
@@ -330,7 +330,7 @@ Reset-baseline comparison follows [presentation design](../gui-presentation/desi
 
 A module reset MUST name its module and the reset baseline in its action label, accessible help, and history description under the core-term table. A grouped settings reset MUST name its settings section instead of a photographic module.
 
-The inspector stage names MUST be `Input and capture`, `Film`, `Print`, `Scan`, `LUT`, `Effects`, and `Output`. The persistent mode selector is not a stage.
+The inspector stage names MUST be `Input and capture`, `Film`, `Print`, `Scan`, `LUT`, `Effects`, and `Output`. The persistent simulation-method selector is not a stage.
 
 A stage jump MUST identify the heading it reaches, not a page it replaces. `Settings` and `Export` MUST name dialogs rather than additional stages.
 

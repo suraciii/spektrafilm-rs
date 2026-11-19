@@ -303,7 +303,7 @@ The following operation distinctions MUST hold alongside each feature's existing
 
 | Control or operation | Required distinction |
 | --- | --- |
-| Scene exposure compensation, camera diffusion, and Halation on `input` | None executes on the input-only route; valid stored requests are inactive. |
+| Scene exposure compensation, camera diffusion, and Film Halation on `input` | None executes on the input-only route; valid stored requests are inactive. |
 | Capture illuminant and film exposure effects | New exposure of film is distinct from interpreting a captured negative or resuming developed film. |
 | Film chemistry | Actual film development is distinct from convert-film inversion and continuation of an already developed film state. |
 | Enlarger, Preflash, and print chemistry | New print exposure or development is distinct from scanning an already developed print. |
@@ -647,7 +647,7 @@ Exercise complete `--params`, sparse JSON, sparse TOML, inline assignments, pres
 
 | Scenario | Required evidence |
 | --- | --- |
-| Input-only versus full-chain output | Legal scene exposure, Halation, and print-glare edits with grain disabled MUST report inactive with an operation reason on `input` in text and JSON. Paired CPU output dimensions and samples MUST remain identical; an admitted full-chain render of a nonuniform image MUST provide a positive control. |
+| Input-only versus full-chain output | Legal scene exposure, Film Halation, and print-glare edits with grain disabled MUST report inactive with an operation reason on `input` in text and JSON. Paired CPU output dimensions and samples MUST remain identical; an admitted full-chain render of a nonuniform image MUST provide a positive control. |
 | Route boundaries | Representative controls MUST cover every admitted route's operations. Include `input > film > print` versus `print > scan`: print-glare defaults are inactive in the first and applicable in the second when enabled. |
 | Continuation and diagnostic spans | Convert-film, film-artifact continuation, and an admitted span that skips film exposure MUST NOT claim new exposure or redevelopment. Frozen-state conflicts MUST still fail; retained interpretation context MUST preserve the downstream result. |
 | Grain operation ownership | Material grain and post-scan appearance grain MUST remain distinct. Artifact output MUST NOT gain post-scan appearance because its controls are stored under `film_render.grain`. |

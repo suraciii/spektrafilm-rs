@@ -151,9 +151,9 @@ Scanner lens blur MUST model readout optics on linear transmitted or reflected l
 
 Unsharp mask is digital scan sharpening, not lens resolution. It remains downstream of interpretation and output gamut processing. Procedural and Exposure Grain retain their separate [post-scan boundaries](../film-grain/spec.md#contract); they MUST NOT be moved into optical acquisition to make the grain engines appear equivalent.
 
-## Film halation source response
+## Film Halation source response
 
-Film Halation operates on the film input under [Halation models](../halation/spec.md). It MUST NOT use an RGB highlight mask.
+Film Halation operates on the Film Input under [Halation models](../halation/spec.md).
 
 - `film_render.halation.boost_ev`, `boost_range`, and `protect_ev` reconstruct pre-clip highlight irradiance before camera diffusion, lens blur, and halation. They are an option of the Film Halation feature: they run only while `halation.active` is true, and a zero boost is a normal off state that leaves `boost_range` and `protect_ev` stored but inactive.
 - `film_render.halation.source_compression` is an experimental appearance control, not a measured CineStill threshold or a replacement for film halation physics. It defaults to `0`, which preserves the existing linear halation source response.

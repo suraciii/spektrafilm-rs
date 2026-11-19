@@ -34,7 +34,7 @@ Core MUST own one implementation of [material defaults](spec.md#material-default
 
 The implementation MUST use existing explicit-leaf metadata, not comparison with a default value. It MUST preserve the metadata while refreshing unowned leaves; a vector is one leaf.
 
-Stock initialization MUST distinguish fresh material defaults from legacy overrides at the shared lookup boundary. The existing batch digest and legacy baselines retain missing-stock grain values, partial-array remainders, and unmatched halation values. Fresh initialization resolves class/schema defaults instead.
+Stock initialization MUST distinguish fresh material defaults from legacy overrides at the shared lookup boundary. The existing batch digest and legacy baselines retain missing-stock grain values, partial-array remainders, and unmatched Film Halation values. Fresh initialization resolves class/schema defaults instead.
 
 The process resolver MUST select this policy from baseline origin, not from the presence of later presets, feature profiles, or `--set` sources. Both policies MUST share the digest ordering and lookup helpers.
 
