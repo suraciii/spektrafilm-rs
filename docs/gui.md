@@ -220,11 +220,11 @@ For Dye inspection, use **SCAN**, then select exact **100%** zoom. [Preview and 
 
 **RGB light leak gain** is an additive linear-light amount. **tint** is the spill color; zero gain or an all-zero tint is an exact bypass. **position** is normalized to the frame and aspect-corrected, **angle** rotates the elliptical spill, and **width** and **spread** set its compact extent. **texture** and **texture scale** add deterministic unevenness selected by **seed**.
 
-The effect is evaluated per exposure in RGB multiple exposure, then the summed linear frame passes through RGB Halation, the LUT, LUT Grade, output encoding, and Grain once.
+The effect is evaluated per exposure in RGB multiple exposure. Diffusion, RGB Light Leak, and RGB Halation run on each shot before the linear frames are summed; the summed frame then passes through the LUT, LUT Grade, output encoding, and Grain once.
 
 ### Multiple exposure
 
-Open **Photographs → Multiple exposure** to compose two to eight exposures. The open photograph is shot 1; **Add shots…** appends equal-sized sources. Each row carries its own EV in `[-10, 10]`, and **Move earlier**, **Move later**, and **Remove** edit stack order. Source thumbnails identify each shot; they never alter source pixels. The panel never mixes Film and RGB groups.
+Open **Photographs → Multiple exposure** to compose two to eight exposures. The open photograph is shot 1; **Add shots…** appends equal-sized sources. Each row carries its own EV in `[-10, 10]`, and **Move earlier**, **Move later**, **Replace source…**, and **Remove** edit stack order and membership. Source thumbnails identify each shot; they never alter source pixels. The panel never mixes Film and RGB groups.
 
 **Film** requires a film-forming route. Each shot runs the film exposure path and collects at `log_e_film`; development, density, DIR couplers, and grain run once. **Metering** chooses Manual, Each shot, or Lock to first. Manual applies the per-shot EV as exposed; automatic modes meter as their names say. Camera exposure compensation is zero while a stack is active.
 

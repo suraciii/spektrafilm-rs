@@ -1798,6 +1798,7 @@
   "multiple_exposure.primary": "主曝光",
   "multiple_exposure.no_primary": "请先打开一张照片",
   "multiple_exposure.remove": "移除",
+  "multiple_exposure.replace_source": "替换素材…",
   "multiple_exposure.move_up": "前移",
   "multiple_exposure.move_down": "后移",
   "multiple_exposure.add": "添加曝光…",
@@ -1812,5 +1813,6 @@
   "multiple_exposure.invalid": "多重曝光无效：%{detail}",
   "multiple_exposure.status_loaded": "多重曝光就绪：%{count} 次曝光",
   "multiple_exposure.history_add": "添加多重曝光素材",
+  "multiple_exposure.history_replace": "替换多重曝光素材",
   "multiple_exposure.history_edit": "编辑多重曝光堆栈"
 }

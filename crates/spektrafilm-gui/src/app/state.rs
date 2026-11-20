@@ -772,6 +772,7 @@ impl App {
 
         self.full_scan_requested = false;
         self.render_worker.cancel_active();
+        let refreshed = loaded.is_some();
         if let Some(prepared) = loaded {
             let view = prepared
                 .view
@@ -806,6 +807,11 @@ impl App {
             self.output_metadata = None;
             self.source_render = None;
             self.publish_input_viewer(view.oriented, view.raster);
+        }
+        if refreshed && self.multiple_exposure.active() {
+            self.multiple_exposure.images.clear();
+            self.multiple_exposure.thumbnails.clear();
+            self.multiple_exposure.needs_reload = true;
         }
         self.viewer
             .restore_state(&self.gui_state.sections["rust"]["viewer"]);

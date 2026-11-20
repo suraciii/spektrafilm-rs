@@ -129,7 +129,7 @@ The GUI MUST provide one Multiple Exposure panel for both methods. It is a photo
 | GUI area | Requirement |
 | --- | --- |
 | Stack | Add, remove, and reorder two to eight exposures; keep one selected exposure. |
-| Exposure | Edit the per-exposure offset and source; show a source thumbnail, not a fabricated result. |
+| Exposure | Edit the per-exposure offset; replace extra-exposure sources from the panel. The primary source is the open photograph. Show a source thumbnail, not a fabricated result. |
 | Method | Select Film or RGB once per stack; never mix method groups. |
 | Film group | Expose the shared capture, material, route, scan, and metering controls; expose camera-side operations per exposure. |
 | RGB group | Expose per-exposure pre-LUT effects; expose LUT, LUT Grade, output, and Grain once for the composite. |

@@ -395,7 +395,9 @@ impl App {
                                     )),
                                     &pipeline,
                                     backend.as_ref(),
+                                    selected_backend.as_ref(),
                                     None,
+                                    rotation_quarter_turns,
                                 )
                                 .map(|image| (Some(image), None))
                         } else if backend.is_gpu() {

@@ -1115,6 +1115,39 @@ mod tests {
         assert!(loaded.validate(None, &data).is_err());
     }
 
+    #[test]
+    fn rgb_multiple_exposure_sources_round_trip_as_dependencies() {
+        let (dir, data, source, mut settings) = fixture();
+        settings.params.workflow.mode = spektrafilm_core::params::WorkflowMode::Off;
+        settings.params.workflow.route = "input".into();
+        let shot = dir.path().join("rgb-second-exposure.tiff");
+        std::fs::write(&shot, b"rgb second exposure bytes").unwrap();
+        let sha256 = digest(&shot).unwrap();
+        settings.multiple_exposure = Some(crate::multiple_exposure::MultipleExposureSettings {
+            method: crate::multiple_exposure::MultipleExposureMethod::Rgb,
+            metering: crate::multiple_exposure::MultipleExposureMetering::Manual,
+            primary_exposure_ev: -0.25,
+            shots: vec![crate::multiple_exposure::MultipleExposureShot {
+                path: shot.clone(),
+                sha256: sha256.clone(),
+                exposure_ev: 0.75,
+            }],
+        });
+        let record = PhotographRecord::capture(&source, settings, &data).unwrap();
+        let path = dir.path().join("rgb-multiple-exposure-record.json");
+        record.save(&path).unwrap();
+        let loaded = PhotographRecord::load(&path).unwrap();
+        let exposure = loaded.settings.multiple_exposure.as_ref().unwrap();
+        assert_eq!(
+            exposure.method,
+            crate::multiple_exposure::MultipleExposureMethod::Rgb
+        );
+        assert_eq!(exposure.shots[0].exposure_ev, 0.75);
+        assert!(loaded.dependencies.iter().any(|dependency| {
+            dependency.path == shot && dependency.sha256.as_deref() == Some(sha256.as_str())
+        }));
+    }
+
     #[cfg(unix)]
     #[test]
     fn nonregular_sources_are_rejected_without_blocking() {

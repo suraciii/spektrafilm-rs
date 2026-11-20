@@ -112,7 +112,6 @@ impl AdjustmentState {
             app.multiple_exposure.settings = exposure_settings;
             app.multiple_exposure.needs_reload = needs_reload;
             app.multiple_exposure.clear_error();
-            app.multiple_exposure.touch();
             app.source_render = None;
             app.dirty = true;
         }

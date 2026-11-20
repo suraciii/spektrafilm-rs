@@ -42,7 +42,7 @@ The Film leak MUST remain additive film exposure. It MUST use physical film geom
 
 RGB light leak is an appearance effect. It MUST NOT read a film profile, film density, spectral sensitivity, camera exposure, or scan response.
 
-The RGB leak MUST be defined in the full composition frame and MUST remain stable across preview scale, crop, and output size. The output crop MUST apply after the leak and after multiple-exposure composition.
+The RGB leak MUST be defined in the cropped composition frame. For a fixed crop, preview scale and output size MUST NOT change the leak geometry. The leak is evaluated after input crop/rescale and before the LUT.
 
 The RGB group MUST provide an active switch, a linear-light gain, a linear RGB tint, a compact leak geometry, a texture amount, a texture scale, and a seed. The gain MUST be absolute; it MUST NOT scale with scene brightness.
 

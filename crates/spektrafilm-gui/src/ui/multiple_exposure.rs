@@ -21,6 +21,8 @@ impl App {
         let mut changed = false;
         let mut move_shot = None;
         let mut remove = None;
+        let mut replace = None;
+        let mut selected = self.multiple_exposure.selected;
         let film_available =
             self.params.workflow.mode.is_film() && self.params.workflow.route_enum().exposes_film();
         let rgb_available = !self.params.workflow.mode.is_film();
@@ -120,7 +122,9 @@ impl App {
                         ))
                         .strong(),
                     );
-                    ui.label(primary_name);
+                    if ui.selectable_label(selected == 0, primary_name).clicked() {
+                        selected = 0;
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add(
                             egui::DragValue::new(&mut settings.primary_exposure_ev)
@@ -143,7 +147,15 @@ impl App {
                             .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
                             .unwrap_or_else(|| shot.path.display().to_string());
-                        ui.label(format!("{}. {name}", index + 2));
+                        if ui
+                            .selectable_label(
+                                selected == index + 1,
+                                format!("{}. {name}", index + 2),
+                            )
+                            .clicked()
+                        {
+                            selected = index + 1;
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
                                 .small_button(crate::i18n::text(
@@ -153,6 +165,17 @@ impl App {
                                 .clicked()
                             {
                                 remove = Some(index);
+                            }
+                            if ui
+                                .small_button("…")
+                                .on_hover_text(crate::i18n::text(
+                                    ui.ctx(),
+                                    "multiple_exposure.replace_source",
+                                ))
+                                .clicked()
+                            {
+                                replace = Some(index);
+                                selected = index + 1;
                             }
                             if ui
                                 .small_button("↓")
@@ -236,6 +259,11 @@ impl App {
                     .settings
                     .shots
                     .swap(index, target as usize);
+                if self.multiple_exposure.selected == index + 1 {
+                    self.multiple_exposure.selected = target as usize + 1;
+                } else if self.multiple_exposure.selected == target as usize + 1 {
+                    self.multiple_exposure.selected = index + 1;
+                }
                 changed = true;
             }
         }
@@ -243,17 +271,31 @@ impl App {
             && index < self.multiple_exposure.settings.shots.len()
         {
             self.multiple_exposure.settings.shots.remove(index);
+            if self.multiple_exposure.selected == index + 1 {
+                self.multiple_exposure.selected = 0;
+            } else if self.multiple_exposure.selected > index + 1 {
+                self.multiple_exposure.selected -= 1;
+            }
             changed = true;
         }
+        if selected != self.multiple_exposure.selected {
+            self.multiple_exposure.selected = selected;
+        }
+        self.multiple_exposure.selected = self
+            .multiple_exposure
+            .selected
+            .min(self.multiple_exposure.settings.shots.len());
         if changed {
             self.multiple_exposure.clear_error();
-            self.multiple_exposure.touch();
             self.mark_parameters_changed();
             self.render_worker.cancel_active();
             self.source_render = None;
             self.label_adjustment_message(crate::app::Message::new(
                 "multiple_exposure.history_edit",
             ));
+        }
+        if let Some(index) = replace {
+            self.replace_multiple_exposure_source(index);
         }
         if add {
             self.add_multiple_exposure_shots();

@@ -1798,6 +1798,7 @@
   "multiple_exposure.primary": "Primary",
   "multiple_exposure.no_primary": "Open a photograph first",
   "multiple_exposure.remove": "Remove",
+  "multiple_exposure.replace_source": "Replace source…",
   "multiple_exposure.move_up": "Move earlier",
   "multiple_exposure.move_down": "Move later",
   "multiple_exposure.add": "Add shots…",
@@ -1812,5 +1813,6 @@
   "multiple_exposure.invalid": "Multiple exposure is invalid: %{detail}",
   "multiple_exposure.status_loaded": "Multiple exposure ready: %{count} shots",
   "multiple_exposure.history_add": "Add multiple-exposure shots",
+  "multiple_exposure.history_replace": "Replace multiple-exposure source",
   "multiple_exposure.history_edit": "Edit multiple-exposure stack"
 }

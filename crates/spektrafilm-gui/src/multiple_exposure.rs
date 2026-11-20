@@ -129,9 +129,9 @@ pub(crate) struct MultipleExposureWork {
     pub(crate) open: bool,
     pub(crate) settings: MultipleExposureSettings,
     pub(crate) images: Vec<(PathBuf, InputImage)>,
+    pub(crate) selected: usize,
     pub(crate) thumbnails: std::collections::HashMap<PathBuf, egui::TextureHandle>,
     pub(crate) error: Option<String>,
-    pub(crate) epoch: u64,
     /// A reopened record without its shot rasters asks the input worker to
     /// reload them before the next render.
     pub(crate) needs_reload: bool,
@@ -205,10 +205,6 @@ impl MultipleExposureWork {
     pub(crate) fn clear_error(&mut self) {
         self.error = None;
     }
-
-    pub(crate) fn touch(&mut self) {
-        self.epoch = self.epoch.wrapping_add(1);
-    }
 }
 
 impl MultipleExposureStack {
@@ -227,20 +223,27 @@ impl MultipleExposureStack {
     }
 
     /// Compose the primary photograph and every extra shot, then run the
-    /// method chain once. Preview resizing happens here so Preview and Scan
-    /// use the same shot order and the same validation.
+    /// method chain once. The primary arrives already oriented; extra shots
+    /// receive the same quarter turns here. Preview resizing happens here so
+    /// Preview and Scan use the same shot order and the same validation.
     pub(crate) fn compose(
         &self,
         primary: &InputImage,
         pipeline: &Runtime,
         backend: &dyn ComputeBackend,
+        source_backend: &dyn ComputeBackend,
         preview_max_size: Option<u32>,
+        rotation_quarter_turns: u32,
     ) -> Result<ImageBuf, String> {
         self.settings.validate()?;
         let mut images = Vec::with_capacity(self.settings.total_shots());
-        images.push(primary.to_host(backend)?);
+        images.push(primary.to_host(source_backend)?);
         for shot in &self.settings.shots {
-            images.push(self.image_for(&shot.path)?.to_host(backend)?);
+            let mut image = self.image_for(&shot.path)?.to_host(source_backend)?;
+            if rotation_quarter_turns != 0 {
+                image = image.rotated_quarter_turns(rotation_quarter_turns as i32);
+            }
+            images.push(image);
         }
         if let Some(max_size) = preview_max_size {
             if max_size == 0 {

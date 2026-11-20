@@ -369,10 +369,12 @@ impl RenderWorker {
                                         &super::render::InputImage::Host(primary.clone()),
                                         &pipeline_template,
                                         backend,
+                                        request.backend.as_ref(),
                                         runtime_params
                                             .settings
                                             .preview_mode
                                             .then_some(runtime_params.settings.preview_max_size),
+                                        rotation,
                                     ),
                                 )
                             } else {
