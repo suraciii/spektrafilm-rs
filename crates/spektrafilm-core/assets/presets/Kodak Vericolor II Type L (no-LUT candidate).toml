@@ -1,0 +1,87 @@
+schema_version = 7
+
+name = "Kodak Vericolor II Type L (no-LUT candidate)"
+author = "SpektraFilm"
+description = "Best no-LUT public-data candidate. Approximate Kodak Vericolor II Type L (4108) on Kodak Ektacolor Edge: M -3 / Y 0 over the measured neutral (effective M 73 / Y 117), finishing saturation -0.6, print exposure 1.0, auto print normalization. This is a global-preset compromise, not a measured stock or verified normal look. It lowers the portrait cheek chroma from 41.9 to 29.5 (source 18.4) and keeps the chart mid near neutral, but skin is still warmer and more saturated than the source; a tone-dependent correction would need a LUT or a finishing control. The film profile is a public-data reconstruction: E-77 DS-8 curves/sensitivity, Portra 160 donor dyes, Ektacolor Edge paper proxy. Not stock fidelity."
+
+[film_profile]
+stock = "kodak_vericolor_ii_type_l_approx"
+version = "0.3.4"
+
+[print_profile]
+stock = "kodak_ektacolor_edge"
+version = "0.3.4"
+
+[parameters.finishing]
+brightness = 0.0
+contrast = 0.0
+warmth = 0.0
+saturation = -0.6
+
+[parameters.finishing.expand]
+enabled = false
+black = 0.0
+white = 1.0
+
+[parameters.output_mix]
+amount = 1.0
+
+[parameters.enlarger]
+illuminant = "TH-KG3"
+print_exposure = 1.0
+print_exposure_mode = "auto"
+m_filter_shift = -3.0
+y_filter_shift = 0.0
+preflash_exposure = 0.0
+preflash_y_filter_shift = 0.0
+preflash_m_filter_shift = 0.0
+
+[parameters.enlarger.diffusion_filter]
+active = false
+filter_family = "black_pro_mist"
+strength = 0.5
+spatial_scale = 1.0
+halo_warmth = 0.0
+core_intensity = 1.0
+core_size = 1.0
+halo_intensity = 1.0
+halo_size = 1.0
+bloom_intensity = 1.0
+bloom_size = 1.0
+
+[parameters.film_render]
+density_curve_gamma = 1.0
+
+[parameters.film_render.chemistry]
+active = true
+gamma_factor = 1.0
+gamma_factor_fast = 1.0
+gamma_factor_slow = 1.0
+gamma_factor_red = 1.0
+gamma_factor_green = 1.0
+gamma_factor_blue = 1.0
+developer_exhaustion = 0.0
+
+[parameters.scanner]
+lens_blur = 0.0
+scan_output = "direct_scan"
+unsharp_mask = [0.7, 0.7]
+
+[parameters.print_render]
+
+[parameters.camera_diffusion_filter]
+active = false
+filter_family = "black_pro_mist"
+strength = 0.5
+spatial_scale = 1.0
+halo_warmth = 0.0
+core_intensity = 1.0
+core_size = 1.0
+halo_intensity = 1.0
+halo_size = 1.0
+bloom_intensity = 1.0
+bloom_size = 1.0
+
+[provenance]
+implementation_version = "0.3.4"
+model_version = "0.3.4"

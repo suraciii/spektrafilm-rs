@@ -1,0 +1,11 @@
+{
+  "stock": "kodak_vericolor_ii_type_l_approx",
+  "name": "Kodak Vericolor II Professional Film 4108, Type L",
+  "primary_url": "http://photomemorabilia.co.uk/Colour_Darkroom/MFisher/Kodak_%20Color_Films_E77_DataBook_Sep1980.pdf",
+  "primary_sha256": "5e308ce1114ca57a7a644dc047982609e315244341efb658aeed7b69e4fc3cb5",
+  "primary_revision": "Kodak Publication E-77, September 1980, DS-8 page 62",
+  "primary_page": 62,
+  "process": "C-41; tungsten 3200 K, 1 second; Status M densitometry; spectral sensitivity at density 1.0 above D-min.",
+  "adaptation": "Digitized characteristic curves, spectral sensitivity, D-min and mid-scale combined spectral density from DS-8. The publication does not separate the three C/M/Y dye spectra; channel_density is the kodak_portra_160 donor. Base and mid-scale runtime source remain partially unverified. This is a public-data approximation, not a measured stock profile.",
+  "license": "Profile CC BY-SA 4.0. Donor dye data from kodak_portra_160 by Andrea Volpato (CC BY-SA 4.0); see data/license/VERICOLOR_II_TYPE_L.txt."
+}

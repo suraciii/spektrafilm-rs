@@ -66,6 +66,7 @@ Library writes reject names already owned by another document. This includes con
 | **Ilford FP4 Plus** | `ilford_fp4_plus` | `kodak_polymax_fine_art` | Medium-speed B&W; same single-record adaptation and class-level effects caveat. |
 | **Kodak Portra 800 Push +1** | `kodak_portra_800_push1` | `kodak_portra_endura` | Uses the separate Push +1 curve already present in the profile library; not an exposure-slider imitation. Grain RMS is a push prior. |
 | **Kodak Tri-X Reversal 7266** | `kodak_trix` | `kodak_polymax_fine_art` | B&W reversal, direct positive; null sensitivity samples in the source profile are filled with an effective-zero sentinel. Treat as an experimental, uncalibrated reversal look. |
+| **Kodak Vericolor II Type L (no-LUT candidate)** | `kodak_vericolor_ii_type_l_approx` | `kodak_ektacolor_edge` | Public-data E-77 DS-8 reconstruction with Portra 160 donor dyes; M73/Y117 and finishing saturation −0.6. A global compromise, not measured stock or verified normal fidelity. |
 
 These looks keep grain and halation active. The profiles and the profile-source
 records identify the source revision; `docs/attribution.md` carries the license

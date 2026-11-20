@@ -144,3 +144,15 @@ plot. The [source notice](../data/license/ROLLEI_RETRO_80S.txt) separates the
 new transcription/reconstruction contributions from the Rollei/MACO technical
 material and the forum measurement. This is **not** a manufacturer curve,
 **not** a 120 measurement, and **not** an ID-11/D-76 curve.
+
+## Kodak Vericolor II Type L (4108)
+
+The `kodak_vericolor_ii_type_l_approx` profile reconstructs the E-77
+September 1980 DS-8 page-62 characteristic curves, spectral sensitivity,
+D-min, and mid-scale combined spectral density. DS-8 does not separate the
+C/M/Y dye spectra, so the profile uses the `kodak_portra_160` donor dyes and
+the bundled Ektacolor Edge print proxy. The
+[source and license notice](../data/license/VERICOLOR_II_TYPE_L.txt) separates
+the new digitization/normalization contributions from Kodak's technical
+material and the donor data. No film or paper capture exists; this is a
+public-data approximation, not measured stock fidelity.
