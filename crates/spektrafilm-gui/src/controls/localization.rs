@@ -547,6 +547,16 @@ fn key(label: &str) -> Option<&'static str> {
         "Enable grain" => Some("controls.grain.enable"),
         "Enable halation" => Some("controls.halation.enable"),
         "Enable halation and in-emulsion scatter." => Some("controls.halation.enable_help"),
+        "Enable RGB light leak" => Some("controls.rgb_light_leak.enable"),
+        "rgb light leak gain" => Some("controls.rgb_light_leak.gain"),
+        "rgb light leak tint" => Some("controls.rgb_light_leak.tint"),
+        "rgb light leak position" => Some("controls.rgb_light_leak.position"),
+        "rgb light leak angle" => Some("controls.rgb_light_leak.angle"),
+        "rgb light leak width" => Some("controls.rgb_light_leak.width"),
+        "rgb light leak spread" => Some("controls.rgb_light_leak.spread"),
+        "rgb light leak texture" => Some("controls.rgb_light_leak.texture"),
+        "rgb light leak texture scale" => Some("controls.rgb_light_leak.texture_scale"),
+        "rgb light leak seed" => Some("controls.rgb_light_leak.seed"),
         "Enable light leak" => Some("controls.light_leak.enable"),
         "Enable the camera light leak and its stray-light aperture." => {
             Some("controls.light_leak.enable_help")

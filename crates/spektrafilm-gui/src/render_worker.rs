@@ -282,7 +282,9 @@ impl RenderWorker {
                                     .arg("detail", error)
                             })?;
                         let host_input = (|| -> Result<Option<Arc<ImageBuf>>, String> {
-                            if request.backend.is_gpu() {
+                            if request.backend.is_gpu()
+                                && request.snapshot.multiple_exposure().is_none()
+                            {
                                 return Ok(None);
                             }
                             let bound = input_prepare.context().enabled().then(|| {
@@ -357,83 +359,115 @@ impl RenderWorker {
                                 });
                             let backend = bound.as_deref().unwrap_or(backend);
                             let _span = simulation.context().span().map(|span| span.enter());
-                            let prepared_input = if request.backend.is_gpu()
-                                && request.snapshot.cancellation().is_some()
-                                && cancellable.is_none()
+                            let composed = if let Some(stack) = request.snapshot.multiple_exposure()
                             {
-                                Err("selected GPU cannot bind operation cancellation".to_owned())
-                            } else {
-                                retained_input.prepare(
-                                    &image,
-                                    job.input_epoch,
-                                    runtime_params,
-                                    &request.backend,
-                                    backend,
-                                )
-                            };
-                            let prepared = prepared_input.and_then(|image| {
-                                if request.backend.is_gpu() {
-                                    let super::render::InputImage::Device(image) = image else {
-                                        unreachable!("GPU input prepared on device");
-                                    };
-                                    let geometry = spektrafilm_core::pipeline::RetainedRender {
-                                        rotation_quarter_turns: rotation,
-                                        preview_max_size: runtime_params
+                                let primary = host_input.as_ref().ok_or_else(|| {
+                                    "multiple exposure has no prepared primary source".to_owned()
+                                })?;
+                                Some(
+                                    stack.compose(
+                                        &super::render::InputImage::Host(primary.clone()),
+                                        &pipeline_template,
+                                        backend,
+                                        request.backend.as_ref(),
+                                        runtime_params
                                             .settings
                                             .preview_mode
                                             .then_some(runtime_params.settings.preview_max_size),
-                                    };
-                                    if false {
-                                        pipeline_template
-                                            .process_device_scan_cached_retained_observed(
+                                        rotation,
+                                    ),
+                                )
+                            } else {
+                                None
+                            };
+                            let prepared = if composed.is_some() {
+                                Ok(None)
+                            } else {
+                                let prepared_input = if request.backend.is_gpu()
+                                    && request.snapshot.cancellation().is_some()
+                                    && cancellable.is_none()
+                                {
+                                    Err("selected GPU cannot bind operation cancellation"
+                                        .to_owned())
+                                } else {
+                                    retained_input.prepare(
+                                        &image,
+                                        job.input_epoch,
+                                        runtime_params,
+                                        &request.backend,
+                                        backend,
+                                    )
+                                };
+                                prepared_input.and_then(|image| {
+                                    if request.backend.is_gpu() {
+                                        let super::render::InputImage::Device(image) = image else {
+                                            unreachable!("GPU input prepared on device");
+                                        };
+                                        let geometry = spektrafilm_core::pipeline::RetainedRender {
+                                            rotation_quarter_turns: rotation,
+                                            preview_max_size: runtime_params
+                                                .settings
+                                                .preview_mode
+                                                .then_some(
+                                                    runtime_params.settings.preview_max_size,
+                                                ),
+                                        };
+                                        if false {
+                                            pipeline_template
+                                                .process_device_scan_cached_retained_observed(
+                                                    &image,
+                                                    &mut scan_cache,
+                                                    geometry,
+                                                    &request.backend,
+                                                    simulation.context(),
+                                                )
+                                                .map(Some)
+                                        } else {
+                                            pipeline_template
+                                                .process_device_retained(&image, geometry, backend)
+                                                .map(Some)
+                                        }
+                                    } else {
+                                        Ok(None)
+                                    }
+                                })
+                            };
+                            if let Some(composed) = composed {
+                                composed.map(|image| (Some(image), None))
+                            } else {
+                                match prepared {
+                                    // Explicit diagnostic taps alone materialize samples.
+                                    Ok(Some(image))
+                                        if matches!(
+                                            image.domain(),
+                                            spektrafilm_backend::SampleDomain::LogExposure
+                                                | spektrafilm_backend::SampleDomain::Density
+                                        ) =>
+                                    {
+                                        image.to_host(backend).map(|image| (Some(image), None))
+                                    }
+                                    Ok(Some(image)) => Ok((None, Some(image))),
+                                    Ok(None) => {
+                                        let image = host_input.expect("CPU working image prepared");
+                                        if false {
+                                            pipeline_template.process_scan_cached_observed(
                                                 &image,
                                                 &mut scan_cache,
-                                                geometry,
                                                 &request.backend,
                                                 simulation.context(),
                                             )
-                                            .map(Some)
-                                    } else {
-                                        pipeline_template
-                                            .process_device_retained(&image, geometry, backend)
-                                            .map(Some)
+                                        } else {
+                                            pipeline_template.process_observed(
+                                                Arc::try_unwrap(image)
+                                                    .unwrap_or_else(|image| (*image).clone()),
+                                                request.backend.as_ref(),
+                                                simulation.context(),
+                                            )
+                                        }
+                                        .map(|image| (Some(image), None))
                                     }
-                                } else {
-                                    Ok(None)
+                                    Err(error) => Err(error),
                                 }
-                            });
-                            match prepared {
-                                // Explicit diagnostic taps alone materialize samples.
-                                Ok(Some(image))
-                                    if matches!(
-                                        image.domain(),
-                                        spektrafilm_backend::SampleDomain::LogExposure
-                                            | spektrafilm_backend::SampleDomain::Density
-                                    ) =>
-                                {
-                                    image.to_host(backend).map(|image| (Some(image), None))
-                                }
-                                Ok(Some(image)) => Ok((None, Some(image))),
-                                Ok(None) => {
-                                    let image = host_input.expect("CPU working image prepared");
-                                    if false {
-                                        pipeline_template.process_scan_cached_observed(
-                                            &image,
-                                            &mut scan_cache,
-                                            &request.backend,
-                                            simulation.context(),
-                                        )
-                                    } else {
-                                        pipeline_template.process_observed(
-                                            Arc::try_unwrap(image)
-                                                .unwrap_or_else(|image| (*image).clone()),
-                                            request.backend.as_ref(),
-                                            simulation.context(),
-                                        )
-                                    }
-                                    .map(|image| (Some(image), None))
-                                }
-                                Err(error) => Err(error),
                             }
                         };
                         let (output, retained) = observed_result(

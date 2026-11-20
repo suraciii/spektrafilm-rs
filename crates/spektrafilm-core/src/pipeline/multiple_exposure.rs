@@ -14,6 +14,7 @@
 
 use super::*;
 use spektrafilm_backend::{DeviceImage, Precision, RetainedImageMeta, SampleDomain};
+use spektrafilm_math::colorspace;
 
 #[cfg(feature = "precision-f64")]
 type AccumulatorSample = f64;
@@ -41,6 +42,14 @@ pub struct ExposureShot<'a> {
     pub exposure_ev: f64,
     /// Metering policy for this stack. All shots must agree.
     pub metering: ShotMetering,
+}
+
+/// One RGB multiple-exposure shot. The shot is decoded, offset, and passed
+/// through the active pre-LUT effects before linear-light composition.
+#[derive(Debug, Clone, Copy)]
+pub struct RgbExposureShot<'a> {
+    pub image: &'a ImageBuf,
+    pub exposure_ev: f64,
 }
 
 /// A streaming multiple-exposure stack. Create it with
@@ -565,6 +574,120 @@ impl Pipeline {
             stack.add_shot(shot.image, shot.exposure_ev)?;
         }
         stack.finish()
+    }
+
+    /// Compose an RGB stack in linear light, then run the active LUT,
+    /// LUT Grade, gamut, output encoding, and Grain once.
+    ///
+    /// Each shot is decoded, offset, clamped to nonnegative light, and passed
+    /// through the active pre-LUT effects. The input is already a raster; the
+    /// caller owns the GUI/CLI source-loading and preview resize policy.
+    pub fn process_rgb_exposures(
+        &self,
+        shots: &[RgbExposureShot<'_>],
+        backend: &dyn ComputeBackend,
+    ) -> Result<ImageBuf, String> {
+        if self.params.workflow.mode.is_film() {
+            return Err("RGB multiple exposure requires the LUT or Off workflow".into());
+        }
+        if shots.len() < 2 || shots.len() > 8 {
+            return Err("RGB multiple exposure requires two to eight shots".into());
+        }
+        if let Some(effects) = self.params.effects.as_ref() {
+            effects.validate()?;
+        }
+        let look = if self.params.workflow.mode.is_lut() {
+            self.lut_look
+                .as_deref()
+                .ok_or_else(|| "LUT mode has no resolved LUT look".to_owned())?
+        } else {
+            self.off_look
+                .as_deref()
+                .ok_or_else(|| "Off mode has no resolved Effects look".to_owned())?
+        };
+        let effects_look = look.effects_only();
+        let final_look = look.look_only();
+        let linear_srgb = crate::lut_look::LutSpace::SrgbLinear.color_space();
+        let source_space = colorspace::resolve(&self.params.io.input_color_space)?;
+        let output_space = colorspace::resolve(&self.params.io.output_color_space)?;
+        let output_encoded = self.params.io.output_cctf_encoding;
+        let matrix = colorspace::conversion_matrix(source_space, &linear_srgb);
+        let gamut_off = crate::gamut_compression::OutputGamutCompress::build(
+            &crate::params::OutputGamutCompressParams {
+                algorithm: "off".into(),
+                ..Default::default()
+            },
+            "sRGB",
+        )?;
+        let mut composite: Option<ImageBuf> = None;
+        let mut pitch = 0.0;
+        for (index, shot) in shots.iter().enumerate() {
+            if !shot.exposure_ev.is_finite() || !(-10.0..=10.0).contains(&shot.exposure_ev) {
+                return Err(format!(
+                    "RGB multiple exposure shot {index}: exposure_ev must be finite and in [-10, 10]"
+                ));
+            }
+            let (working, shot_pitch) =
+                crate::resizing::crop_and_rescale(shot.image, &self.params.io, 35.0)?;
+            if index == 0 {
+                pitch = shot_pitch;
+            } else if (pitch - shot_pitch).abs() > f64::EPSILON {
+                return Err(format!(
+                    "RGB multiple exposure shot {index}: shots do not share one working pitch"
+                ));
+            }
+            let mut linear = working.into_owned();
+            for pixel in linear.data.as_chunks_mut::<3>().0 {
+                let rgb = [to_f64(pixel[0]), to_f64(pixel[1]), to_f64(pixel[2])];
+                let converted = colorspace::convert_rgb(
+                    rgb,
+                    source_space,
+                    self.params.io.input_cctf_decoding,
+                    &linear_srgb,
+                    false,
+                    &matrix,
+                );
+                let gain = shot.exposure_ev.exp2();
+                for channel in 0..3 {
+                    pixel[channel] = from_f64((converted[channel] * gain).max(0.0));
+                }
+            }
+            let affected = effects_look.render(
+                &linear,
+                &linear_srgb,
+                false,
+                &linear_srgb,
+                false,
+                pitch,
+                &gamut_off,
+                backend,
+            )?;
+            match &mut composite {
+                Some(sum) => {
+                    if sum.width != affected.width || sum.height != affected.height {
+                        return Err(format!(
+                            "RGB multiple exposure shot {index}: shots do not share working geometry"
+                        ));
+                    }
+                    for (sum, value) in sum.data.iter_mut().zip(affected.data) {
+                        *sum += value;
+                    }
+                }
+                None => composite = Some(affected),
+            }
+        }
+        let composite =
+            composite.ok_or_else(|| "RGB multiple exposure produced no composition".to_owned())?;
+        final_look.render(
+            &composite,
+            &linear_srgb,
+            false,
+            output_space,
+            output_encoded,
+            pitch,
+            &self.output_gamut,
+            backend,
+        )
     }
 
     /// GPU path: expose each shot to retained `log_e_film`, compose on the

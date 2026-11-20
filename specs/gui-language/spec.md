@@ -70,6 +70,7 @@ The Simplified Chinese presentation MUST use these core terms consistently. The 
 | Simulation method / Spectral / RGB | 模拟方法 / 光谱 / RGB |
 | RGB workflow / LUT / Effects | RGB 工作流 / LUT / 效果 |
 | Film Halation / RGB Halation | 胶片光晕 / RGB 光晕 |
+| Light leak / RGB Light Leak | 漏光 / RGB 漏光 |
 | Radius / Intensity / Threshold | 半径 / 强度 / 阈值 |
 | Advanced | 高级 |
 | Effects | 效果 |
@@ -93,6 +94,10 @@ The RGB workflow label MUST be `LUT` or `Effects`.
 The Film-stage halation control MUST be `Film Halation`.
 
 The Effects-stage halation control MUST be `RGB Halation`.
+
+The Film-stage light-leak control MUST be `Light leak`.
+
+The Effects-stage light-leak control MUST be `RGB Light Leak`.
 
 The RGB Halation primary controls MUST be `Radius`, `Intensity`, and `Threshold`.
 

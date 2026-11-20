@@ -246,6 +246,7 @@ impl App {
         copy_session_settings(&mut settings.params.settings, &self.params.settings);
         settings.params.debug = self.params.debug.clone();
         settings.params.taps = self.params.taps.clone();
+        let exposure = settings.multiple_exposure.take().unwrap_or_default();
         self.params = settings.params;
         self.film_route = settings.film_route;
         self.params
@@ -265,6 +266,10 @@ impl App {
         self.input_rotation = settings.rotation;
         self.image_path = Some(path);
         self.image = Some(image);
+        self.multiple_exposure = Default::default();
+        self.multiple_exposure.open = exposure.active();
+        self.multiple_exposure.needs_reload = exposure.active();
+        self.multiple_exposure.settings = exposure;
         self.source_metadata = metadata;
         self.raw_lens_info = lens_info;
         self.photograph.lens_model_identity = lens_model_identity;
@@ -312,6 +317,7 @@ impl App {
         let mut settings = self.capture_photograph_settings()?;
         settings.rotation = 0;
         settings.raw = self.gui_state.sections["load_raw"].clone();
+        settings.multiple_exposure = None;
         if image_io::is_raw(path) {
             settings.params.io.input_color_space = "ACES2065-1".into();
             settings.params.io.input_cctf_decoding = false;
@@ -541,6 +547,17 @@ impl App {
                     action = Some("list");
                     ui.memory_mut(|memory| memory.close_popup());
                 }
+                let exposure = ui
+                    .add_enabled(
+                        self.image.is_some(),
+                        egui::Button::new(crate::i18n::text(ui.ctx(), "multiple_exposure.title")),
+                    )
+                    .on_hover_text(crate::i18n::text(ui.ctx(), "multiple_exposure.menu_help"));
+                controls::locate_row(ui, "action.multiple_exposure", &exposure);
+                if exposure.clicked() {
+                    action = Some("multiple");
+                    ui.memory_mut(|memory| memory.close_popup());
+                }
             },
         );
         match action {
@@ -559,6 +576,7 @@ impl App {
                 }
             }
             Some("list") => self.photograph.work_list.open = true,
+            Some("multiple") => self.multiple_exposure.open = true,
             _ => {}
         }
     }

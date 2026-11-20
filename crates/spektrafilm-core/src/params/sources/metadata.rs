@@ -666,6 +666,9 @@ fn description(path: &str) -> Option<&'static str> {
         path if path.starts_with("grade.") => {
             Some("Post-LUT Tone & Color response; independent from film-chain finishing.")
         }
+        path if path.starts_with("effects.light_leak.") => Some(
+            "Frame-relative tinted light leak for LUT and Off modes; it adds linear light before RGB halation and the lookup.",
+        ),
         path if path.starts_with("effects.halation.") => Some(
             "Halation for LUT and Off modes in linear light before the lookup; it does not read film density or a film profile.",
         ),

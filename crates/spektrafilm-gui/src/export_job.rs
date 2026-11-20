@@ -177,7 +177,11 @@ impl App {
         self.export_options
             .write_state(&mut self.gui_state.sections);
         self.search_index.reset();
-        let snapshot = self.render_snapshot(params);
+        let snapshot = self.render_snapshot(params).with_multiple_exposure(
+            self.multiple_exposure
+                .active()
+                .then(|| self.multiple_exposure.stack()),
+        );
         // Orientation is retained metadata, not a rewritten source: the
         // retained render applies it on the device and the host reference
         // applies it before its own stages.
@@ -354,7 +358,7 @@ impl App {
                             pipeline.params().io.input_cctf_decoding,
                         ).map_err(anyhow::Error::msg)?;
                         let host_input = (|| -> Result<Option<spektrafilm_math::image::ImageBuf>> {
-                            if backend.is_gpu() {
+                            if backend.is_gpu() && snapshot.multiple_exposure().is_none() {
                                 return Ok(None);
                             }
                             let bound = input_prepare.context().enabled().then(||
@@ -380,7 +384,23 @@ impl App {
                         let simulation = observation.scope(
                             "simulation", ObservationKind::Phase, Purpose::Image,
                         );
-                        let processed = if backend.is_gpu() {
+                        let processed = if let Some(stack) = snapshot.multiple_exposure() {
+                            let primary = host_input.as_ref().ok_or_else(|| {
+                                anyhow::anyhow!("multiple exposure has no exported primary source")
+                            })?;
+                            stack
+                                .compose(
+                                    &super::render::InputImage::Host(std::sync::Arc::new(
+                                        primary.clone(),
+                                    )),
+                                    &pipeline,
+                                    backend.as_ref(),
+                                    selected_backend.as_ref(),
+                                    None,
+                                    rotation_quarter_turns,
+                                )
+                                .map(|image| (Some(image), None))
+                        } else if backend.is_gpu() {
                             let bound = simulation.context().enabled().then(||
                                 spektrafilm_backend::bind_backend(
                                     backend.as_ref(), simulation.context().clone(),

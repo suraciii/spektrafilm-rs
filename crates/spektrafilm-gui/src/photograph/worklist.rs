@@ -110,6 +110,39 @@ fn snapshot(settings: &PhotographSettings, data_dir: &Path) -> RenderSnapshot {
     )
 }
 
+fn load_exposure_stack(
+    settings: &PhotographSettings,
+    backend: &dyn spektrafilm_backend::ComputeBackend,
+) -> Result<Option<crate::multiple_exposure::MultipleExposureStack>> {
+    let Some(exposure) = &settings.multiple_exposure else {
+        return Ok(None);
+    };
+    let mut extras = Vec::with_capacity(exposure.shots.len());
+    for shot in &exposure.shots {
+        let raw = spektrafilm_core::image_io::is_raw(&shot.path);
+        let input = crate::input_worker::InputSpec {
+            source: crate::input_worker::InputSource::File {
+                path: shot.path.clone(),
+                raw: settings.raw.clone(),
+            },
+            rotation: 0,
+            space: if raw {
+                "ACES2065-1".into()
+            } else {
+                settings.params.io.input_color_space.clone()
+            },
+            decode: !raw && settings.params.io.input_cctf_decoding,
+            max_size: None,
+        };
+        let loaded = crate::input_worker::prepare(input, backend)?;
+        extras.push((shot.path.clone(), loaded.source));
+    }
+    Ok(Some(crate::multiple_exposure::MultipleExposureStack::new(
+        exposure.clone(),
+        extras,
+    )))
+}
+
 fn captured_scope(source: &PhotographSettings, scope: CopyScope) -> Result<Option<Preset>> {
     let params = accepted_params(source);
     Ok(match scope {
@@ -822,13 +855,15 @@ impl App {
                             } else {
                                 retained.expect("accepted export source")
                             };
+                            let exposure = load_exposure_stack(&settings, backend)?;
                             Ok(QueueSubmission {
                                 source_name,
                                 image,
                                 metadata,
                                 destination,
                                 rotation_quarter_turns: settings.rotation.rem_euclid(4) as u32,
-                                snapshot: snapshot(&settings, &data_dir),
+                                snapshot: snapshot(&settings, &data_dir)
+                                    .with_multiple_exposure(exposure),
                                 options: options.clone(),
                             })
                         })();

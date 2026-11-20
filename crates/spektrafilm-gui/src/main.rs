@@ -41,6 +41,7 @@ mod export_job;
 mod headless;
 mod i18n;
 mod input_worker;
+mod multiple_exposure;
 rust_i18n::i18n!("locales", fallback = "en");
 mod numeric;
 mod photograph;

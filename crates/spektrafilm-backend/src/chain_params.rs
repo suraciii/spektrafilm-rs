@@ -634,6 +634,22 @@ pub struct Lut3dLookGpuParams<'a> {
     pub strength: f32,
 }
 
+/// RGB light-leak appearance: a frame-relative tinted additive spill in
+/// linear working RGB. The CPU reference and device shader use the same
+/// normalized geometry, texture, and seed.
+#[derive(Debug, Clone, Copy)]
+pub struct LutLightLeakGpuParams {
+    pub gain: f32,
+    pub tint: [f32; 3],
+    pub position: [f32; 2],
+    pub angle_deg: f32,
+    pub width: f32,
+    pub spread: f32,
+    pub texture_amount: f32,
+    pub texture_scale: f32,
+    pub seed: u32,
+}
+
 /// RGB halation appearance: a maximum-channel highlight mask followed by the
 /// declared multi-bounce response. The kernel returns a halo layer; the LUT
 /// stage adds `max(0, halo - mask)` and never renormalizes.

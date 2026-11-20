@@ -18,6 +18,7 @@ pub(super) struct AdjustmentState {
     applied: Option<presets::AppliedPreset>,
     film_route: Option<String>,
     pub(super) rotation: i32,
+    pub(super) multiple_exposure: Option<crate::multiple_exposure::MultipleExposureSettings>,
 }
 
 impl AdjustmentState {
@@ -46,6 +47,10 @@ impl AdjustmentState {
             applied: app.presets.state.applied.clone(),
             film_route: app.film_route.clone(),
             rotation: app.input_rotation,
+            multiple_exposure: app
+                .multiple_exposure
+                .active()
+                .then(|| app.multiple_exposure.settings.clone()),
         }
     }
 
@@ -62,6 +67,11 @@ impl AdjustmentState {
             && self.raw_settings == app.gui_state.sections["load_raw"]
             && self.film_route == app.film_route
             && self.rotation == app.input_rotation
+            && self.multiple_exposure
+                == app
+                    .multiple_exposure
+                    .active()
+                    .then(|| app.multiple_exposure.settings.clone())
     }
 
     pub(super) fn runtime_params(&self, app: &App) -> RuntimeParams {
@@ -91,6 +101,20 @@ impl AdjustmentState {
         app.gui_state.sections["load_raw"] = self.raw_settings.clone();
         app.presets.state.applied = self.applied.clone();
         app.film_route = self.film_route.clone();
+        let exposure_settings = self.multiple_exposure.clone().unwrap_or_default();
+        if app.multiple_exposure.settings != exposure_settings
+            || app.multiple_exposure.active() != self.multiple_exposure.is_some()
+        {
+            let needs_reload = exposure_settings
+                .shots
+                .iter()
+                .any(|shot| app.multiple_exposure.image(&shot.path).is_none());
+            app.multiple_exposure.settings = exposure_settings;
+            app.multiple_exposure.needs_reload = needs_reload;
+            app.multiple_exposure.clear_error();
+            app.source_render = None;
+            app.dirty = true;
+        }
         if refresh_input && app.image.is_some() {
             app.input_epoch = app.input_epoch.wrapping_add(1);
             app.input_rotation = self.rotation;
@@ -150,6 +174,7 @@ impl AdjustmentHistory {
                 applied: settings.applied.clone(),
                 film_route: settings.film_route.clone(),
                 rotation: settings.rotation,
+                multiple_exposure: settings.multiple_exposure.clone(),
             })),
             ..Default::default()
         }
@@ -232,6 +257,7 @@ impl App {
                 .unwrap_or(&accepted.raw_settings)
                 .clone(),
             rotation: accepted.rotation,
+            multiple_exposure: accepted.multiple_exposure.clone(),
             film_route: accepted.film_route.clone(),
             applied: accepted.applied.clone(),
         }
@@ -249,6 +275,7 @@ impl App {
             || baseline.film != accepted.film_name
             || baseline.print != accepted.print_name
             || baseline.rotation != accepted.rotation
+            || baseline.multiple_exposure != accepted.multiple_exposure
             || baseline.film_route != accepted.film_route
             || baseline.special != accepted.special
             || baseline.applied != accepted.applied
@@ -1186,6 +1213,7 @@ mod external_copy_tests {
             raw: factory.sections["load_raw"].clone(),
             special: factory.sections["special"].clone(),
             rotation: 1,
+            multiple_exposure: None,
             film_route: None,
             applied: None,
         };

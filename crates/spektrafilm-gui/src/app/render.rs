@@ -148,9 +148,14 @@ impl App {
             crate::render::Comparison::None
         };
         let backend: std::sync::Arc<dyn spektrafilm_backend::ComputeBackend> = self.backend.clone();
+        let exposure = self
+            .multiple_exposure
+            .active()
+            .then(|| self.multiple_exposure.stack());
         let snapshot = self
             .render_snapshot(params)
             .with_comparison(comparison)
+            .with_multiple_exposure(exposure)
             .with_cancellation(Some(Arc::new(AtomicBool::new(false))));
         let request = RenderRequest {
             job: RenderJob {

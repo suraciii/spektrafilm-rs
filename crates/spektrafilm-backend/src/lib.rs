@@ -188,6 +188,15 @@ pub trait ComputeBackend: Send + Sync {
         Ok(None)
     }
 
+    /// Apply the RGB light-leak appearance layer on device.
+    fn lut_light_leak(
+        &self,
+        _img: &ImageBuf,
+        _params: &LutLightLeakGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        Ok(None)
+    }
+
     /// Apply the LUT workflow's additive highlight halation layer on device.
     fn lut_halation(
         &self,

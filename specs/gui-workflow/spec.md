@@ -8,7 +8,7 @@ The [GUI presentation specification](../gui-presentation/spec.md) owns visual hi
 - The GUI exposes controls for input, film, print, scanner, LUT, effects, output, advanced color, and configuration.
 - The global simulation-method selector MUST follow [Render modes](../render-mode/spec.md), [Simulation methods](../simulation-method/spec.md), and [GUI language](../gui-language/spec.md#simulation-method-and-halation-labels). It is not a stage and is not part of the stage jump strip.
 - The LUT stage MUST follow the [LUT workflow](../lut-workflow/spec.md), and its transform controls MUST follow the [LUT transform](../lut-transform/spec.md#ui-and-cli). RGB LUT retains stored film, print, and scanner controls without executing their stages.
-- The Effects stage owns Diffusion, RGB Halation, and Grain. It is active in RGB and inactive in Spectral.
+- The Effects stage owns Diffusion, RGB Light Leak, RGB Halation, and Grain. It is active in RGB and inactive in Spectral.
 - The header's method summary is read-only and MAY locate the global selector. It MUST NOT provide a second method editor.
 - The seven stage headings remain reachable in every method. An inactive stage body and its module reset actions MUST be disabled and collapsed by default while its heading, stored values, and applicability reason remain readable.
 - The preset browser MUST include Film, LUT, and Effects presets. Applying a preset selects the render mode its kind requires.
@@ -214,16 +214,18 @@ Each module has one editing owner. The inspector MUST contain these stages and m
 | Print | Print material selector and its development-time family; Enlarger exposure mode, exposure, exposure tracking, M/Y shifts, and illuminant; Preflash; Enlarger diffusion; print Chemistry and independent density-curve gamma; Print base. |
 | Scan | Fixed product readout illuminant information; eligible scan output and conversion-style controls; specialized negative-conversion correction, restore, copy/paste and held automatic comparison; Scan Profile selector, strength, curve editor, and held comparison; lens blur, unsharp mask; Print viewing glare; Tone & Color and its collapsible Range group. |
 | LUT | LUT file import, replace, and reveal; LUT declaration and strength; LUT Grade and its held comparison. Film, Print, and Scan stages remain stored but inactive. |
-| Effects | Diffusion; RGB Halation; Grain. The stage is active in RGB and inactive in Spectral. |
+| Effects | Diffusion; RGB Light Leak; RGB Halation; Grain. The stage is active in RGB and inactive in Spectral. |
 | Output | Output color space and encoding where exposed by their contracts; output gamut processing; CMYK ink style and Simulation blend, inactive in RGB; retained Save color and encoding settings. |
 | Application settings | General: interface language, preview limits, and rendering preferences that are not photographic controls; State and startup: startup state save/load/default actions; Display: display transform, ICC selection, canvas, padding, and interpolation; Diagnostics: observation and report actions. Language preference ownership follows [GUI product language](../gui-language/spec.md#selection-and-persistence), not photographic state. |
 | Export dialog | Independent full-resolution export backend, format, depth, saving color and encoding, applicable codec/compression options, destination selection, and export submission. |
 | Viewer footer | Original/Modified/Paper back selection; zoom, fit, reveal, crossfade, and read-only zoom state; [black and white endpoint warnings](../gui-product-design/clipping-warnings/spec.md#controls); optional image-analysis visibility. |
 | Preset browser | Film, LUT, and Effects preset selection; browser search; library refresh/reveal; preset management. |
 
+Multiple Exposure is a photograph-level panel, not a stage or a second inspector. Its stack behavior follows [Multiple exposure](../multiple-exposure/spec.md#gui); its editing uses the same validated-edit and history boundary.
+
 A persistent **Simulation method** selector sits above the stage list and offers Spectral and RGB under [Simulation methods](../simulation-method/spec.md). RGB exposes the LUT and Effects workflows. It is not a stage and MUST NOT appear in the stage jump strip.
 
-Film owns the Grain module. The Effects stage owns Diffusion, RGB Halation, and Grain as independent transform effects.
+Film owns the Grain module. The Effects stage owns Diffusion, RGB Light Leak, RGB Halation, and Grain as independent transform effects.
 
 The Grain module keeps the five-engine selector and all engine-specific controls in one location. It MUST label Spektra, Dye, and Fotufilm Film as material grain and Procedural and Exposure Grain as post-scan appearance.
 
@@ -319,7 +321,7 @@ Calibration baselines, prepared values, no-op leaves, removed parameters, and in
 
 Film Halation MUST expose `active`, `scatter_amount`, `scatter_spatial_scale`, `halation_amount`, `halation_spatial_scale`, `source_compression`, `boost_ev`, `protect_ev`, `boost_range`, `scatter_core_um`, `scatter_tail_um`, `scatter_tail_weight`, `halation_strength`, `halation_first_sigma_um`, `halation_n_bounces`, `halation_bounce_decay`, and `halation_renormalize` under `film_render.halation`. Each editable RGB component MUST remain available. Its feature-profile selector follows [Feature profiles](../feature-profiles/spec.md#film-halation-profile-family); it MUST NOT add a persisted Film Halation profile identity or replace the individual controls.
 
-Light leak MUST expose `active`, `exposure_ev`, `position`, `width_mm`, `spread_mm`, `angle_deg`, `leak_spectrum`, `texture_amount`, and `texture_scale_mm` under `film_render.light_leak`. Each editable RGB component MUST remain available.
+Light leak MUST expose its complete Film group under `film_render.light_leak` and its complete RGB group under `effects.light_leak`. Each editable RGB component MUST remain available. The two groups MUST remain separate owners under [Light leak](../light-leak/spec.md#gui-and-presets).
 
 `boost_ev`, `boost_range`, and `protect_ev` are the highlight-reconstruction option of Film Halation: they remain stored but apply only while Film Halation is enabled, and `boost_range` and `protect_ev` further require a nonzero boost.
 

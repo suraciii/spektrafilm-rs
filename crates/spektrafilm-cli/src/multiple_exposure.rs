@@ -742,6 +742,7 @@ fn run_rgb(args: &ProcessArgs, _data: &DataSelection, resolved: &Resolved) -> Re
                 "lut": !rgb.lut.path.as_os_str().is_empty(),
                 "effects": {
                     "diffusion": rgb.effects.diffusion.active,
+                    "light_leak": rgb.effects.light_leak.active,
                     "halation": rgb.effects.halation.active,
                     "grain": rgb.effects.grain.active
                 },
@@ -759,8 +760,9 @@ fn run_rgb(args: &ProcessArgs, _data: &DataSelection, resolved: &Resolved) -> Re
                 println!("lut: {}", !rgb.lut.path.as_os_str().is_empty());
                 println!("grade: {}", rgb.grade.active);
                 println!(
-                    "effects: diffusion={} halation={} grain={}",
+                    "effects: diffusion={} light_leak={} halation={} grain={}",
                     rgb.effects.diffusion.active,
+                    rgb.effects.light_leak.active,
                     rgb.effects.halation.active,
                     rgb.effects.grain.active
                 );
@@ -927,6 +929,7 @@ fn run_rgb(args: &ProcessArgs, _data: &DataSelection, resolved: &Resolved) -> Re
                 "lut": !rgb.lut.path.as_os_str().is_empty(),
                 "effects": {
                     "diffusion": rgb.effects.diffusion.active,
+                    "light_leak": rgb.effects.light_leak.active,
                     "halation": rgb.effects.halation.active,
                     "grain": rgb.effects.grain.active
                 },
@@ -951,13 +954,14 @@ fn run_rgb(args: &ProcessArgs, _data: &DataSelection, resolved: &Resolved) -> Re
         );
     }
     eprintln!(
-        "multiple exposure rgb: {} shots, {}x{}, lut={}, grade={}, effects(diffusion={}, halation={}, grain={})",
+        "multiple exposure rgb: {} shots, {}x{}, lut={}, grade={}, effects(diffusion={}, light_leak={}, halation={}, grain={})",
         resolved.shots.len(),
         rendered.width,
         rendered.height,
         !rgb.lut.path.as_os_str().is_empty(),
         rgb.grade.active,
         rgb.effects.diffusion.active,
+        rgb.effects.light_leak.active,
         rgb.effects.halation.active,
         rgb.effects.grain.active
     );

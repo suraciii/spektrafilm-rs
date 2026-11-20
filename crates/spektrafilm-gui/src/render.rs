@@ -166,6 +166,7 @@ pub(super) struct RenderSnapshot {
     special: serde_json::Value,
     cancellation: Option<Arc<AtomicBool>>,
     comparison: Comparison,
+    multiple_exposure: Option<crate::multiple_exposure::MultipleExposureStack>,
 }
 
 impl RenderSnapshot {
@@ -184,6 +185,7 @@ impl RenderSnapshot {
             special,
             cancellation: None,
             comparison: Comparison::None,
+            multiple_exposure: None,
         }
     }
 
@@ -204,6 +206,10 @@ impl RenderSnapshot {
             special,
             raw: crate::state::GuiState::factory().sections["load_raw"].clone(),
             rotation: 0,
+            multiple_exposure: self
+                .multiple_exposure
+                .as_ref()
+                .map(|stack| stack.settings.clone()),
             film_route: None,
             applied: None,
         };
@@ -233,6 +239,29 @@ impl RenderSnapshot {
 
     pub(super) fn comparison(&self) -> Comparison {
         self.comparison
+    }
+
+    pub(super) fn with_multiple_exposure(
+        mut self,
+        stack: Option<crate::multiple_exposure::MultipleExposureStack>,
+    ) -> Self {
+        if let Some(stack) = &stack {
+            self.params.taps = Default::default();
+            self.params.camera.exposure_compensation_ev = 0.0;
+            self.params.camera.auto_exposure = stack.settings.metering
+                != crate::multiple_exposure::MultipleExposureMetering::Manual;
+            // The composed frame is the output-mix product; applying a second
+            // partial mix after composition would scale one stack twice.
+            self.params.output_mix.amount = 1.0;
+        }
+        self.multiple_exposure = stack;
+        self
+    }
+
+    pub(super) fn multiple_exposure(
+        &self,
+    ) -> Option<&crate::multiple_exposure::MultipleExposureStack> {
+        self.multiple_exposure.as_ref()
     }
 
     #[cfg(test)]

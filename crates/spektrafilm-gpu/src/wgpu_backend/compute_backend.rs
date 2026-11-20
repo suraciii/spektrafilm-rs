@@ -619,6 +619,15 @@ impl ComputeBackend for WgpuBackend {
         backend.lut3d_look_gpu(img, original, params).map(Some)
     }
 
+    fn lut_light_leak(
+        &self,
+        img: &ImageBuf,
+        params: &spektrafilm_backend::LutLightLeakGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        let (backend, _batch) = self.observed_batch("lut_light_leak");
+        backend.lut_light_leak_gpu(img, params).map(Some)
+    }
+
     fn lut_halation(
         &self,
         img: &ImageBuf,

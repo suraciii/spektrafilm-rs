@@ -36,6 +36,8 @@ Film look and section documents use schema v7. LUT presets use schema v8 and car
 
 RGB Halation itself has no film-stock identity. Its generic, stock-agnostic starting values are inactive, `mask_low 0.18`, `mask_high 0.9`, `65 µm`, and strength `[0.05, 0.015, 0]`. Enabling it on a new RGB look starts there; users can tune any amount from that baseline.
 
+RGB Light Leak is likewise stock-agnostic and inactive by default. Its generic starting values are `gain 0.35`, warm tint `[1.0, 0.62, 0.35]`, position `[-0.78, 0.45]`, angle `18°`, width `0.34`, spread `0.62`, and mild texture. These are appearance controls, not film exposure and not a vendor preset. An Effects preset carries them with the rest of the RGB Effects parameters.
+
 The built-in library provides spectral Film presets and Film section presets. It does not provide an RGB Effects preset. Users configure the RGB Effects workflow at runtime and may save their own Effects preset. The primary Radius control reaches 600 µm and Intensity reaches 4 for stronger variants. Those values are appearance controls, not Film or Dehancer calibration.
 
 In Film mode, **Save preset...** captures a film look. In LUT mode, it captures the imported LUT declaration, Effects, and LUT Grade and requires a validated LUT file. In Off mode, it captures Effects without a LUT or Grade. `process --preset` accepts a LUT or Effects preset without `--film`, `--paper`, `--route`, or `--scan-film`; mixing one with a film look or section preset is rejected. `preset list` reports the LUT or Effects kind, LUT file status, and active Effects. Exporting or importing a LUT preset moves only the preset document.

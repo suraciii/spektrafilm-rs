@@ -415,6 +415,134 @@ pub(crate) fn halation_from_json_value(
     })
 }
 
+/// RGB light leak: a compact tinted spill added in linear working RGB.
+/// The frame-relative geometry is independent of film light-leak millimetres.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LutLightLeakParams {
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default = "default_light_leak_gain")]
+    pub gain: f64,
+    #[serde(default = "default_light_leak_tint")]
+    pub tint: [f64; 3],
+    #[serde(default = "default_light_leak_position")]
+    pub position: [f64; 2],
+    #[serde(default = "default_light_leak_angle")]
+    pub angle_deg: f64,
+    #[serde(default = "default_light_leak_width")]
+    pub width: f64,
+    #[serde(default = "default_light_leak_spread")]
+    pub spread: f64,
+    #[serde(default = "default_light_leak_texture_amount")]
+    pub texture_amount: f64,
+    #[serde(default = "default_light_leak_texture_scale")]
+    pub texture_scale: f64,
+    #[serde(default)]
+    pub seed: u64,
+}
+
+fn default_light_leak_gain() -> f64 {
+    0.35
+}
+fn default_light_leak_tint() -> [f64; 3] {
+    [1.0, 0.62, 0.35]
+}
+fn default_light_leak_position() -> [f64; 2] {
+    [-0.78, 0.45]
+}
+fn default_light_leak_angle() -> f64 {
+    18.0
+}
+fn default_light_leak_width() -> f64 {
+    0.34
+}
+fn default_light_leak_spread() -> f64 {
+    0.62
+}
+fn default_light_leak_texture_amount() -> f64 {
+    0.22
+}
+fn default_light_leak_texture_scale() -> f64 {
+    3.0
+}
+
+impl Default for LutLightLeakParams {
+    fn default() -> Self {
+        Self {
+            active: false,
+            gain: default_light_leak_gain(),
+            tint: default_light_leak_tint(),
+            position: default_light_leak_position(),
+            angle_deg: default_light_leak_angle(),
+            width: default_light_leak_width(),
+            spread: default_light_leak_spread(),
+            texture_amount: default_light_leak_texture_amount(),
+            texture_scale: default_light_leak_texture_scale(),
+            seed: 0,
+        }
+    }
+}
+
+impl LutLightLeakParams {
+    /// Inactive values remain stored; active controls must be finite and
+    /// within the public domain. A zero gain or tint is a valid bypass.
+    pub fn validate(&self, prefix: &str) -> Result<(), String> {
+        if !self.active {
+            return Ok(());
+        }
+        for (name, value) in [
+            ("gain", self.gain),
+            ("angle_deg", self.angle_deg),
+            ("width", self.width),
+            ("spread", self.spread),
+            ("texture_amount", self.texture_amount),
+            ("texture_scale", self.texture_scale),
+        ] {
+            if !value.is_finite() {
+                return Err(format!("{prefix}.{name} must be finite"));
+            }
+        }
+        if self.gain < 0.0 || self.gain > 8.0 {
+            return Err(format!("{prefix}.gain must be between 0 and 8"));
+        }
+        if self
+            .tint
+            .iter()
+            .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+        {
+            return Err(format!("{prefix}.tint components must be between 0 and 1"));
+        }
+        if self
+            .position
+            .iter()
+            .any(|value| !value.is_finite() || !(-1.0..=1.0).contains(value))
+        {
+            return Err(format!(
+                "{prefix}.position components must be between -1 and 1"
+            ));
+        }
+        if self.width <= 0.0 || self.width > 4.0 {
+            return Err(format!("{prefix}.width must be in (0, 4]"));
+        }
+        if self.spread <= 0.0 || self.spread > 4.0 {
+            return Err(format!("{prefix}.spread must be in (0, 4]"));
+        }
+        if !(0.0..=1.0).contains(&self.texture_amount) {
+            return Err(format!("{prefix}.texture_amount must be between 0 and 1"));
+        }
+        if self.texture_scale < 0.0 {
+            return Err(format!("{prefix}.texture_scale must not be negative"));
+        }
+        Ok(())
+    }
+
+    /// Inactive, zero gain, or all-zero tint is an exact bypass.
+    pub fn is_active(&self) -> bool {
+        self.active && self.gain > 0.0 && self.tint.iter().any(|value| *value > 0.0)
+    }
+}
+
 /// Canonical LUT declaration and strength. Effects and LUT Grade live in
 /// independent runtime groups.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -554,6 +682,8 @@ pub struct EffectsParams {
     #[serde(default)]
     pub diffusion: DiffusionFilterParams,
     #[serde(default)]
+    pub light_leak: LutLightLeakParams,
+    #[serde(default)]
     pub grain: LutGrainParams,
 }
 
@@ -562,6 +692,7 @@ impl Default for EffectsParams {
         Self {
             halation: inactive_halation(),
             diffusion: DiffusionFilterParams::default(),
+            light_leak: LutLightLeakParams::default(),
             grain: LutGrainParams::default(),
         }
     }
@@ -570,6 +701,7 @@ impl Default for EffectsParams {
 impl EffectsParams {
     pub fn validate(&self) -> Result<(), String> {
         self.halation.validate("effects.halation")?;
+        self.light_leak.validate("effects.light_leak")?;
         if self.diffusion.active {
             if !spektrafilm_model::diffusion::VALID_FAMILIES
                 .contains(&self.diffusion.filter_family.as_str())
@@ -655,6 +787,8 @@ pub struct LutLookParams {
     #[serde(default)]
     pub diffusion: DiffusionFilterParams,
     #[serde(default)]
+    pub light_leak: LutLightLeakParams,
+    #[serde(default)]
     pub grain: LutGrainParams,
 }
 
@@ -675,6 +809,7 @@ impl Default for LutLookParams {
             grade: FinishingParams::default(),
             halation: inactive_halation(),
             diffusion: DiffusionFilterParams::default(),
+            light_leak: LutLightLeakParams::default(),
             grain: LutGrainParams::default(),
         }
     }
@@ -703,6 +838,9 @@ impl LutLookParams {
             diffusion: effects.map_or_else(DiffusionFilterParams::default, |effects| {
                 effects.diffusion.clone()
             }),
+            light_leak: effects.map_or_else(LutLightLeakParams::default, |effects| {
+                effects.light_leak.clone()
+            }),
             grain: effects.map_or_else(LutGrainParams::default, |effects| effects.grain.clone()),
         }
     }
@@ -724,6 +862,7 @@ impl LutLookParams {
             EffectsParams {
                 halation: self.halation,
                 diffusion: self.diffusion,
+                light_leak: self.light_leak,
                 grain: self.grain,
             },
             GradeParams {
@@ -780,6 +919,7 @@ impl LutLookParams {
             grade: FinishingParams::default(),
             halation: inactive_halation(),
             diffusion: DiffusionFilterParams::default(),
+            light_leak: LutLightLeakParams::default(),
             grain: LutGrainParams::default(),
         };
         look.validate(true)?;
@@ -854,6 +994,7 @@ impl LutLookParams {
                 }
             }
         }
+        self.light_leak.validate("lut_look.light_leak")?;
         if self.grain.active {
             self.grain.validate()?;
         }
@@ -1086,6 +1227,7 @@ impl LutLook {
         let mut params = self.params.clone();
         params.halation.active = false;
         params.diffusion.active = false;
+        params.light_leak.active = false;
         Self {
             document: self.document.clone(),
             params,
@@ -1126,6 +1268,10 @@ impl LutLook {
         } else {
             self.clipped_pixels.load(Ordering::Relaxed) as f64 / evaluated as f64
         }
+    }
+
+    fn light_leak_is_active(&self) -> bool {
+        self.params.light_leak.is_active()
     }
 
     /// All-zero sigma is an exact bypass; do not enter the linear effect branch for it.
@@ -1174,7 +1320,9 @@ impl LutLook {
             );
         }
         let linear_srgb = LutSpace::SrgbLinear.color_space();
-        let effects = self.params.diffusion.active || self.rgb_halation_is_active();
+        let effects = self.params.diffusion.active
+            || self.light_leak_is_active()
+            || self.rgb_halation_is_active();
         let mut out = image.clone();
         let (lookup_space, lookup_encoded) = if effects {
             let matrix = colorspace::conversion_matrix(source_space, &linear_srgb);
@@ -1198,6 +1346,9 @@ impl LutLook {
                     &self.params.diffusion.to_model(),
                     pixel_size_um.max(f64::EPSILON),
                 )?;
+            }
+            if self.light_leak_is_active() {
+                out = apply_rgb_light_leak(&out, &self.params.light_leak);
             }
             if self.rgb_halation_is_active() {
                 out = apply_rgb_halation(&out, &self.params.halation, pixel_size_um);
@@ -1394,7 +1545,9 @@ impl LutLook {
             Ok(ImageBuf::from_data(image.width, image.height, out))
         };
         let linear_srgb = LutSpace::SrgbLinear.color_space();
-        let effects = self.params.diffusion.active || self.rgb_halation_is_active();
+        let effects = self.params.diffusion.active
+            || self.light_leak_is_active()
+            || self.rgb_halation_is_active();
         let (mut lookup, lookup_space, lookup_encoded) = if effects {
             let mut out = convert(image, source_space, source_encoded, &linear_srgb, false)?;
             if self.params.diffusion.active {
@@ -1416,6 +1569,23 @@ impl LutLook {
                         "optical_diffusion: selected GPU has no LUT diffusion operation".to_owned()
                     })?;
                 }
+            }
+            if self.light_leak_is_active() {
+                let leak = &self.params.light_leak;
+                let params = spektrafilm_backend::LutLightLeakGpuParams {
+                    gain: leak.gain as f32,
+                    tint: leak.tint.map(|value| value as f32),
+                    position: leak.position.map(|value| value as f32),
+                    angle_deg: leak.angle_deg as f32,
+                    width: leak.width as f32,
+                    spread: leak.spread as f32,
+                    texture_amount: leak.texture_amount as f32,
+                    texture_scale: leak.texture_scale as f32,
+                    seed: leak.seed as u32,
+                };
+                out = backend.lut_light_leak(&out, &params)?.ok_or_else(|| {
+                    "lut_light_leak: selected GPU has no LUT light-leak operation".to_owned()
+                })?;
             }
             if self.rgb_halation_is_active() {
                 let halation = &self.params.halation;
@@ -1606,6 +1776,49 @@ fn smoothstep(edge0: f64, edge1: f64, value: f64) -> f64 {
     }
     let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf {
+    if !leak.is_active() || image.width == 0 || image.height == 0 {
+        return image.clone();
+    }
+    let width = image.width as f64;
+    let height = image.height as f64;
+    let aspect = width / height;
+    let angle = leak.angle_deg.to_radians();
+    let (sin_angle, cos_angle) = angle.sin_cos();
+    let position = [leak.position[0] * aspect, leak.position[1]];
+    let width_sq = leak.width * leak.width;
+    let spread_sq = leak.spread * leak.spread;
+    let phase = (leak.seed % 1_048_576) as f64 / 1_048_576.0 * std::f64::consts::TAU;
+    let texture = leak.texture_amount > 0.0 && leak.texture_scale > 0.0;
+    let mut out = image.clone();
+    let out_width = image.width as usize;
+    out.par_pixels_mut().enumerate().for_each(|(index, pixel)| {
+        let x = (index % out_width) as f64;
+        let y = (index / out_width) as f64;
+        let frame_x = (2.0 * (x + 0.5) / width - 1.0) * aspect;
+        let frame_y = 2.0 * (y + 0.5) / height - 1.0;
+        let dx = frame_x - position[0];
+        let dy = frame_y - position[1];
+        let along = cos_angle * dx + sin_angle * dy;
+        let across = -sin_angle * dx + cos_angle * dy;
+        let falloff =
+            (-(along * along) / (2.0 * width_sq) - (across * across) / (2.0 * spread_sq)).exp();
+        let modulation = if texture {
+            let u = along / leak.width * leak.texture_scale + phase;
+            let v = across / leak.spread * leak.texture_scale * 1.37 - phase * 0.73;
+            let pattern = 0.5 + 0.5 * u.sin() * v.sin();
+            1.0 - leak.texture_amount + leak.texture_amount * pattern
+        } else {
+            1.0
+        };
+        let amplitude = leak.gain * falloff * modulation;
+        for (channel, tint) in pixel.iter_mut().zip(&leak.tint) {
+            *channel = from_f64(to_f64(*channel) + amplitude * tint);
+        }
+    });
+    out
 }
 
 fn apply_rgb_halation(
@@ -2071,6 +2284,127 @@ mod tests {
             to_f64(rendered.get(1, 0)[0]) > 0.0,
             "an HDR source below the high protection range must seed a halo"
         );
+    }
+
+    #[test]
+    fn rgb_light_leak_inactive_zero_gain_and_zero_tint_are_exact_bypasses() {
+        let image = ImageBuf::from_data(
+            5,
+            3,
+            (0..45)
+                .map(|index| from_f64(index as f64 / 100.0))
+                .collect(),
+        );
+        let mut params = LutLightLeakParams {
+            active: true,
+            ..LutLightLeakParams::default()
+        };
+        params.gain = 0.0;
+        assert_eq!(apply_rgb_light_leak(&image, &params).data, image.data);
+        params.gain = 1.0;
+        params.tint = [0.0; 3];
+        assert_eq!(apply_rgb_light_leak(&image, &params).data, image.data);
+        params.tint = [1.0, 0.5, 0.2];
+        params.active = false;
+        assert_eq!(apply_rgb_light_leak(&image, &params).data, image.data);
+    }
+
+    #[test]
+    fn rgb_light_leak_is_compact_tinted_and_additive() {
+        let params = LutLightLeakParams {
+            active: true,
+            gain: 1.0,
+            tint: [1.0, 0.5, 0.25],
+            position: [-0.78, 0.0],
+            angle_deg: 0.0,
+            width: 0.2,
+            spread: 0.25,
+            texture_amount: 0.0,
+            texture_scale: 0.0,
+            seed: 7,
+        };
+        let image = ImageBuf::from_data(33, 17, vec![from_f64(0.0); 33 * 17 * 3]);
+        let rendered = apply_rgb_light_leak(&image, &params);
+        let left = rendered.get(1, 8);
+        let right = rendered.get(31, 8);
+        assert!(to_f64(left[0]) > 0.0);
+        assert!((to_f64(left[0]) - 2.0 * to_f64(left[1])).abs() < 1.0e-9);
+        assert!(to_f64(right[0]) < 1.0e-9);
+        for (before, after) in image.data.iter().zip(&rendered.data) {
+            assert!(to_f64(*after) >= to_f64(*before));
+        }
+    }
+
+    #[test]
+    fn rgb_light_leak_validates_the_active_domain() {
+        let mut params = LutLightLeakParams {
+            active: true,
+            ..LutLightLeakParams::default()
+        };
+        assert!(params.validate("effects.light_leak").is_ok());
+        params.gain = -1.0;
+        assert!(params.validate("effects.light_leak").is_err());
+        params.gain = 1.0;
+        params.width = 0.0;
+        assert!(params.validate("effects.light_leak").is_err());
+        params.width = 0.35;
+        params.position[0] = 2.0;
+        assert!(params.validate("effects.light_leak").is_err());
+        params.position[0] = 0.0;
+        params.tint[1] = 2.0;
+        assert!(params.validate("effects.light_leak").is_err());
+    }
+
+    #[test]
+    fn device_rgb_light_leak_matches_the_cpu_reference() {
+        let gpu = spektrafilm_gpu::test_support::explicit_adapter();
+        let leak = LutLightLeakParams {
+            active: true,
+            gain: 0.8,
+            tint: [1.0, 0.55, 0.2],
+            position: [-0.6, 0.3],
+            angle_deg: 23.0,
+            width: 0.3,
+            spread: 0.5,
+            texture_amount: 0.35,
+            texture_scale: 2.5,
+            seed: 17,
+        };
+        let mut data = Vec::with_capacity(41 * 23 * 3);
+        for y in 0..23 {
+            for x in 0..41 {
+                data.push(from_f64(0.02 + x as f64 / 200.0));
+                data.push(from_f64(0.01 + y as f64 / 100.0));
+                data.push(from_f64(0.03));
+            }
+        }
+        let image = ImageBuf::from_data(41, 23, data);
+        let expected = apply_rgb_light_leak(&image, &leak);
+        let actual = gpu
+            .backend()
+            .lut_light_leak(
+                &image,
+                &spektrafilm_backend::LutLightLeakGpuParams {
+                    gain: leak.gain as f32,
+                    tint: leak.tint.map(|value| value as f32),
+                    position: leak.position.map(|value| value as f32),
+                    angle_deg: leak.angle_deg as f32,
+                    width: leak.width as f32,
+                    spread: leak.spread as f32,
+                    texture_amount: leak.texture_amount as f32,
+                    texture_scale: leak.texture_scale as f32,
+                    seed: leak.seed as u32,
+                },
+            )
+            .unwrap()
+            .expect("GPU light leak");
+        let max = expected
+            .data
+            .iter()
+            .zip(&actual.data)
+            .map(|(expected, actual)| (to_f64(*expected) - to_f64(*actual)).abs())
+            .fold(0.0_f64, f64::max);
+        assert!(max < 2.0e-3, "CPU/GPU light leak max difference {max}");
     }
 
     #[test]

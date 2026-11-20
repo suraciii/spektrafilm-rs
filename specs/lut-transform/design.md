@@ -61,32 +61,35 @@ LUT mode MUST evaluate in this order:
 ```text
 1. Decode input and convert to linear working RGB.
 2. Diffusion in linear light.
-3. RGB Halation in linear light.
-4. Shaper and LUT input transform.
-5. 3D LUT.
-6. Decode LUT output to linear output RGB.
-7. Optional LUT Grade.
-8. Existing output gamut processing.
-9. Output encoding.
-10. Grain in output encoding.
-11. Publish output.
+3. Light Leak in linear light.
+4. RGB Halation in linear light.
+5. Shaper and LUT input transform.
+6. 3D LUT.
+7. Decode LUT output to linear output RGB.
+8. Optional LUT Grade.
+9. Existing output gamut processing.
+10. Output encoding.
+11. Grain in output encoding.
+12. Publish output.
 ```
 
-Off mode MUST use the same order with steps 4 through 7 as exact bypasses:
+Off mode MUST use the same order with the shaper, LUT, LUT decode, and LUT Grade as exact bypasses:
 
 ```text
 1. Decode input and convert to linear working RGB.
 2. Diffusion in linear light.
-3. RGB Halation in linear light.
-4. Existing output gamut processing.
-5. Output encoding.
-6. Grain in output encoding.
-7. Publish output.
+3. Light Leak in linear light.
+4. RGB Halation in linear light.
+5. Existing output gamut processing.
+6. Output encoding.
+7. Grain in output encoding.
+8. Publish output.
 ```
 
+Light Leak MUST run after Diffusion and before RGB Halation.
 RGB Halation MUST run before the LUT.
 
-Diffusion models lens scatter; RGB Halation models a highlight-scatter appearance. Diffusion therefore precedes RGB Halation.
+Diffusion models lens scatter; Light Leak models a spill source; RGB Halation models a highlight-scatter appearance.
 
 RGB Halation sees linear light before the LUT. Grain sees final output encoding, so it is independent of LUT contrast.
 
@@ -94,7 +97,7 @@ RGB Halation sees linear light before the LUT. Grain sees final output encoding,
 
 The pre-LUT effect stage MUST be separable from the LUT stage.
 RGB Multiple Exposure runs the effect stage per exposure and the LUT stage once after composition.
-The effect stage owns Diffusion and RGB Halation; the LUT stage owns the shaper, LUT, LUT Grade, output gamut, output encoding, and Grain.
+The effect stage owns Diffusion, RGB Light Leak, and RGB Halation; the LUT stage owns the shaper, LUT, LUT Grade, output gamut, output encoding, and Grain.
 
 ## LUT stage
 
@@ -261,8 +264,9 @@ pub struct LutParams {
 }
 
 pub struct EffectsParams {
-    pub halation: Option<LutHalationParams>,
     pub diffusion: Option<LutDiffusionParams>,
+    pub light_leak: Option<LutLightLeakParams>,
+    pub halation: Option<LutHalationParams>,
     pub grain: Option<LutGrainParams>,
 }
 
@@ -279,7 +283,9 @@ pub struct RuntimeParams {
 }
 ```
 
-`LutDiffusionParams`, `LutHalationParams`, and `LutGrainParams` are transform-owned and distinct from the film diffusion, `film_render.halation`, and `film_render.grain` groups. `LutHalationParams` is the wire type for RGB Halation. Field names MUST NOT alias film-density controls.
+`LutDiffusionParams`, `LutLightLeakParams`, `LutHalationParams`, and `LutGrainParams` are transform-owned and distinct from the film diffusion, `film_render.light_leak`, `film_render.halation`, and `film_render.grain` groups.
+
+`LutHalationParams` is the wire type for RGB Halation. `LutLightLeakParams` is the wire type for RGB Light Leak. Field names MUST NOT alias film-density controls.
 
 The runtime groups are `lut`, `effects`, and `grade`. An absent `workflow.mode` resolves to `film`.
 

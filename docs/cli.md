@@ -154,6 +154,26 @@ spektrafilm describe --module film_render.light_leak
     --set 'film_render.light_leak.leak_spectrum=[1.0,0.4,0.15]'
 ```
 
+### RGB light leak
+
+`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. The frame is normalized to its aspect ratio; `position` is in `[-1, 1]`, `width` and `spread` are normalized lengths, and `seed` selects deterministic texture. Zero gain or a zero tint is an exact bypass.
+
+```bash
+spektrafilm describe --module effects.light_leak
+```
+
+```bash
+# A warm corner spill on an RGB look
+./target/release/spektrafilm process input.png -o leak.tif \
+    --lut look.cube \
+    --set effects.light_leak.active=true \
+    --set effects.light_leak.gain=0.8 \
+    --set 'effects.light_leak.tint=[1.0,0.55,0.2]' \
+    --set 'effects.light_leak.position=[-0.6,0.3]' \
+    --set effects.light_leak.width=0.3 \
+    --set effects.light_leak.spread=0.5
+```
+
 ### Tone & Color
 
 ### Common finishing

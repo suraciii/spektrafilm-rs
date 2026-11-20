@@ -59,6 +59,7 @@ pub(crate) struct App {
     pub(crate) displayed_comparison: Option<super::render::DisplayedComparison>,
     pub(crate) adjustment_history: super::history::AdjustmentHistory,
     pub(crate) photograph: crate::photograph::PhotographWork,
+    pub(crate) multiple_exposure: crate::multiple_exposure::MultipleExposureWork,
     pub(crate) retained_kind: Option<RenderKind>,
     pub(crate) stale_save_confirmation: bool,
     pub(crate) export_queue: super::export_queue::ExportQueue,
@@ -404,6 +405,7 @@ impl App {
             displayed_comparison: None,
             adjustment_history: super::history::AdjustmentHistory::default(),
             photograph: crate::photograph::PhotographWork::default(),
+            multiple_exposure: Default::default(),
             retained_kind: None,
             stale_save_confirmation: false,
             export_queue: super::export_queue::ExportQueue::default(),
@@ -770,6 +772,7 @@ impl App {
 
         self.full_scan_requested = false;
         self.render_worker.cancel_active();
+        let refreshed = loaded.is_some();
         if let Some(prepared) = loaded {
             let view = prepared
                 .view
@@ -804,6 +807,11 @@ impl App {
             self.output_metadata = None;
             self.source_render = None;
             self.publish_input_viewer(view.oriented, view.raster);
+        }
+        if refreshed && self.multiple_exposure.active() {
+            self.multiple_exposure.images.clear();
+            self.multiple_exposure.thumbnails.clear();
+            self.multiple_exposure.needs_reload = true;
         }
         self.viewer
             .restore_state(&self.gui_state.sections["rust"]["viewer"]);

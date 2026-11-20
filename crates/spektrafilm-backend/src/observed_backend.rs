@@ -165,6 +165,13 @@ impl ComputeBackend for ObservedBackend<'_> {
     ) -> Result<Option<ImageBuf>, String> {
         self.backend.lut3d_look(image, original, params)
     }
+    fn lut_light_leak(
+        &self,
+        image: &ImageBuf,
+        params: &LutLightLeakGpuParams,
+    ) -> Result<Option<ImageBuf>, String> {
+        self.backend.lut_light_leak(image, params)
+    }
     fn lut_halation(
         &self,
         image: &ImageBuf,
