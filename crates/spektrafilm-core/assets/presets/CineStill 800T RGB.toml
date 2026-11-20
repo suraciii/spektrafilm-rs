@@ -2,19 +2,19 @@ schema_version = 9
 
 name = "CineStill 800T RGB"
 author = "SpektraFilm"
-description = "Experimental RGB appearance companion to the CineStill 800T Film preset. The default is a general HDR-aware appearance baseline with a moderate red response: 160 µm, a 0.33 threshold that excludes ordinary lit surfaces, and strength [0.30, 0.09, 0.01]. High protection extends above HDR lamp highlights. The maximum-channel mask and one common compositing guard are a separate RGB model. The pair is an appearance relationship, not a measured equivalence claim; stronger 800T-like looks are available through the Radius and Intensity controls."
+description = "Experimental RGB appearance companion to the CineStill 800T Film preset. The default is a general HDR-aware appearance baseline modeled on the moderate 35 mm Halation controls: 110 µm, a 0.15 source limiter, and strength [0.25, 0.075, 0.008]. High protection extends above HDR lamp highlights. The maximum-channel mask and one common compositing guard are a separate RGB model. The pair is an appearance relationship, not a measured equivalence claim; stronger 800T-like looks are available through the Radius and Intensity controls."
 
 [provenance]
-implementation_version = "0.1.5"
+implementation_version = "0.1.6"
 model_version = "spektrafilm"
 
 [effects.halation]
 active = true
-mask_low = 0.33
+mask_low = 0.15
 mask_high = 8.0
 mask_transition = 0.0834
-sigma_um = [160.0, 160.0, 160.0]
-strength = [0.30, 0.09, 0.01]
+sigma_um = [110.0, 110.0, 110.0]
+strength = [0.25, 0.075, 0.008]
 n_bounces = 3
 bounce_decay = 0.5
 
