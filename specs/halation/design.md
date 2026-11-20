@@ -163,9 +163,8 @@ The [LUT transform](../lut-transform/spec.md#rgb-halation) owns the parameter na
 RGB Halation is an appearance model.
 It has no measured Film reference and MUST NOT claim numerical or visual equivalence to Film Halation.
 
-Its appearance target is declared by its own controls and presets.
-A built-in look pair MAY share an authored appearance intent.
-Pair membership is not evidence of equivalence.
+Its appearance target is declared by its own controls and user-owned presets.
+There is no built-in film-stock target for RGB Halation.
 
 Acceptance is behavioral:
 
@@ -218,4 +217,4 @@ Pixel, spectral, and density equality are outside the target.
 7. All-zero RGB sigma is an exact bypass; a zero channel within an active response is near-delta.
 8. The kernel returns a halo layer without strength, scatter, compression, or renormalization.
 9. A zero Film first sigma is a near-delta response; when every Film first sigma is zero, the response is inactive and no renormalization runs.
-10. No RGB parameter, preset, or look pair claims Film Halation equivalence.
+10. No RGB parameter or preset claims Film Halation equivalence.

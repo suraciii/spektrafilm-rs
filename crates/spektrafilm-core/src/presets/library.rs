@@ -3,10 +3,6 @@ use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Built-in-only Film/RGB look pairs. The names are the stable pair identity;
-/// a user-owned preset can never enter this registry.
-const BUILTIN_LOOK_PAIRS: &[(&str, &str)] = &[("CineStill 800T", "CineStill 800T RGB")];
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PresetGroup {
     #[serde(rename = "Built-in")]
@@ -282,26 +278,6 @@ impl PresetLibrary {
     }
     pub fn directory(&self) -> &Path {
         &self.directory
-    }
-
-    /// The built-in counterpart of a look pair. User presets never participate.
-    pub fn paired_builtin(&self, name: &str) -> Result<Option<Preset>, String> {
-        let Some(target) = BUILTIN_LOOK_PAIRS.iter().find_map(|(film, rgb)| {
-            if *film == name {
-                Some(*rgb)
-            } else if *rgb == name {
-                Some(*film)
-            } else {
-                None
-            }
-        }) else {
-            return Ok(None);
-        };
-        builtin_presets()
-            .into_iter()
-            .find(|preset| preset.name == target)
-            .map(Some)
-            .ok_or_else(|| format!("built-in look pair target {target:?} is missing"))
     }
 
     pub fn scan(&self) -> Result<Vec<LibraryEntry>, String> {
@@ -867,27 +843,13 @@ fn write_document(path: &Path, text: &str, replace: bool) -> Result<(), LibraryE
 mod tests {
     use super::*;
     #[test]
-    fn builtin_look_pair_is_bidirectional_and_carries_rgb_halation() {
-        let temp = Temp::new();
-        let library = PresetLibrary::new(temp.0.join("library"));
-        let rgb = library
-            .paired_builtin("CineStill 800T")
-            .unwrap()
-            .expect("CineStill 800T has an RGB pair");
-        assert_eq!(rgb.name, "CineStill 800T RGB");
-        assert_eq!(rgb.kind().unwrap(), PresetKind::Effects);
-        let effects = rgb.effects_parameters().expect("paired RGB effects");
-        assert!(effects.halation.active);
-        assert_eq!(effects.halation.mask_low, 0.15);
-        assert_eq!(effects.halation.mask_high, 8.0);
-        assert_eq!(effects.halation.sigma_um, [110.0; 3]);
-        assert_eq!(effects.halation.strength, [0.25, 0.075, 0.008]);
-        let film = library
-            .paired_builtin("CineStill 800T RGB")
-            .unwrap()
-            .expect("the pair is bidirectional");
-        assert_eq!(film.name, "CineStill 800T");
-        assert!(library.paired_builtin("user look").unwrap().is_none());
+    fn builtin_presets_do_not_include_an_rgb_effects_preset() {
+        assert!(
+            builtin_presets()
+                .into_iter()
+                .all(|preset| !matches!(preset.kind(), Ok(PresetKind::Effects))),
+            "RGB Effects presets are user-owned; the built-in library must stay spectral"
+        );
     }
 
     #[test]

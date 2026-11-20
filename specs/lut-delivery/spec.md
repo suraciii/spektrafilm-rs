@@ -25,9 +25,8 @@
 - Baking MUST neutralize and record optical diffusion and scanner blur under the existing spatial-effect rule.
 - Baking MUST NOT move either after nonlinear development or interpretation.
 - A neutralized bake does not claim equivalence to active spatial rendering.
-- A bake MAY record a paired RGB Halation configuration in bundle metadata.
+- A bake MAY record an RGB Halation configuration in bundle metadata.
 - When present, the bundle MUST record the configuration with `included = false`.
-- A paired RGB preset MAY carry the same configuration.
 - The bundle MUST NOT claim that the baked transform includes halation.
 - Output mix below 1 MUST be supported only by a complete one-LUT source-to-output bake with the prepared source branch expressed in the same transport and geometry.
 - Segmented topologies MUST reject that selection before baking because their scan-stage input does not carry the source branch.

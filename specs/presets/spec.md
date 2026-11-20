@@ -37,20 +37,9 @@ The kind is derived from the carried shape, never declared by a field. A documen
 
 A Film preset or section preset MUST NOT carry `lut`, `effects`, or `grade`. A LUT or Effects preset MUST NOT carry `finishing`, `output_mix`, `cmyk`, or a material or scanner group.
 
-### Look pairs
+Built-in presets are spectral simulation presets or Film section presets. The built-in library MUST NOT provide an RGB Effects preset. Users configure the RGB Effects workflow at runtime and MAY save their own Effects preset.
 
-A look pair relates one Film preset and one RGB preset under one stable look identity.
-It is a library relationship, not a preset kind or a serialized document.
-
-Look pairs are built-in only; a user-owned preset MUST NOT declare a pair.
-The RGB side MAY be a built-in Effects preset; no other built-in Effects preset is admitted.
-
-A paired RGB preset MAY carry RGB Halation values authored for its Film preset.
-A look pair MUST NOT imply cross-method numerical or visual equivalence.
-A preset MUST NOT claim cross-method halation equivalence, paired or not.
-
-A built-in look pair MUST share one stable pair identity across both presets.
-The method switch MAY load the paired preset; it MUST NOT silently change the Film profile or the LUT declaration.
+A preset MUST NOT claim cross-method numerical or visual equivalence.
 
 The derived kind is an internal dispatch fact. It selects the document schema, resolver, render mode, and thumbnail preparation for a preset. It MUST NOT become a separate browser category, library, or mode-type filter.
 
@@ -116,7 +105,7 @@ An Effects preset is a complete preset for the RGB Effects workflow. It carries 
 
 An Effects preset uses preset schema version 9. A version 9 document without an `effects` group or with a `lut`, `grade`, film, or print reference MUST be rejected.
 
-Effects presets are user-owned, except for a built-in RGB preset that participates in a declared [look pair](#look-pairs).
+Effects presets are user-owned.
 
 Missing effect groups mean all effects off. A saved Effects preset MUST carry every effect group's effective values.
 
