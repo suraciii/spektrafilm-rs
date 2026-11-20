@@ -28,7 +28,7 @@ A leak MUST use one compact inward falloff. A leak at one edge MUST NOT add visi
 
 A leak MUST preserve floating headroom. A leak strong enough to drive the Film record past its shoulder MUST read the material's white.
 
-The Film spectrum MUST be a per-record exposure ratio. The RGB tint MUST be linear RGB. Neither method may apply a fixed tint after development or output encoding.
+The Film spectrum MUST be a per-record exposure ratio. The RGB tint MUST be linear RGB. Neither method MAY apply a fixed tint after development or output encoding.
 
 The two methods MUST NOT share one gain, tint, geometry, or texture parameter group. A shared spatial kernel MAY serve both models when each model supplies its own input, parameters, and composition.
 
