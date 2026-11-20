@@ -1962,6 +1962,42 @@ mod tests {
     }
 
     #[test]
+    fn rgb_halation_high_protection_must_not_gate_hdr_highlights() {
+        // The original-TIFF lamp head peaks near 7.1 linear. A Film-derived
+        // protection range near 3 excludes it; the RGB appearance window must
+        // leave room for HDR highlights to seed the halo.
+        let image = {
+            let mut data = vec![from_f64(0.0); 5 * 3];
+            data[2 * 3] = from_f64(7.0);
+            ImageBuf::from_data(5, 1, data)
+        };
+        let render = |mask_high: f64| {
+            let params = LutHalationParams {
+                active: true,
+                mask_low: 0.18,
+                mask_high,
+                mask_transition: 0.0834,
+                sigma_um: [1.5; 3],
+                strength: [0.8; 3],
+                n_bounces: 1,
+                bounce_decay: 0.5,
+            };
+            apply_rgb_halation(&image, &params, 1.0)
+        };
+        assert_eq!(
+            render(2.0).data,
+            image.data,
+            "a sub-3 high window must gate out the HDR lamp head"
+        );
+        let rendered = render(8.0);
+        assert_eq!(to_f64(rendered.get(2, 0)[0]), 7.0);
+        assert!(
+            to_f64(rendered.get(1, 0)[0]) > 0.0,
+            "an HDR source below the high protection range must seed a halo"
+        );
+    }
+
+    #[test]
     fn rgb_halation_all_zero_sigma_is_an_exact_bypass() {
         let params = LutHalationParams {
             active: true,

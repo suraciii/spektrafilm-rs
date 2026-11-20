@@ -878,8 +878,9 @@ mod tests {
         assert_eq!(rgb.kind().unwrap(), PresetKind::Effects);
         let effects = rgb.effects_parameters().expect("paired RGB effects");
         assert!(effects.halation.active);
+        assert_eq!(effects.halation.mask_high, 8.0);
         assert_eq!(effects.halation.sigma_um, [160.0; 3]);
-        assert_eq!(effects.halation.strength, [0.15, 0.045, 0.005]);
+        assert_eq!(effects.halation.strength, [0.30, 0.09, 0.01]);
         let film = library
             .paired_builtin("CineStill 800T RGB")
             .unwrap()
