@@ -1,0 +1,38 @@
+Kodak Vericolor II Type L (4108) public-data reconstruction
+============================================================
+
+Source publication
+------------------
+Kodak Publication E-77, "Kodak Color Films", September 1980,
+data sheet DS-8, page 62: KODAK VERICOLOR II Professional Film 4108,
+Type L.
+Public scan:
+http://photomemorabilia.co.uk/Colour_Darkroom/MFisher/Kodak_%20Color_Films_E77_DataBook_Sep1980.pdf
+SHA-256 of the copy used:
+5e308ce1114ca57a7a644dc047982609e315244341efb658aeed7b69e4fc3cb5
+
+New contributions
+------------------
+The profile digitizes and normalizes the published characteristic curves,
+spectral sensitivity, D-min, and mid-scale combined spectral density. It fits
+the Status M characteristic curves with the donor dye basis. These new
+contributions, the profile JSON, and the built-in preset are licensed under
+Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0):
+https://creativecommons.org/licenses/by-sa/4.0/
+
+Donor and proxy data
+--------------------
+DS-8 does not publish separate C/M/Y dye spectra. The channel_density vectors
+are inherited from the kodak_portra_160 profile by Andrea Volpato, licensed
+CC BY-SA 4.0. The print target uses the bundled Kodak Ektacolor Edge profile.
+E-19 and E-7020 publication data describe that print proxy; they are not
+measurements of Vericolor II film.
+
+Limits
+------
+No film or paper capture was made. The profile is a public-data
+approximation and does not establish stock, paper, scanner, or aging
+fidelity. Do not describe it as a measured reproduction.
+
+Kodak, Vericolor, Ektacolor, and Edge are trademarks of their owners. This
+notice does not imply endorsement.
