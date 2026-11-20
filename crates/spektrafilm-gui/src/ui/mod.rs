@@ -3,6 +3,7 @@ use crate::*;
 use std::sync::atomic::Ordering;
 
 mod inspector;
+mod multiple_exposure;
 mod settings;
 mod workbench;
 
@@ -66,6 +67,12 @@ impl eframe::App for App {
         }
         let _ = frame;
         self.poll_input_job(ctx);
+        if self.multiple_exposure.needs_reload
+            && self.image.is_some()
+            && !self.input_transition_pending()
+        {
+            self.reload_multiple_exposure_sources();
+        }
 
         self.begin_adjustment_frame(ctx);
         self.poll_render_job(ctx);
@@ -115,6 +122,7 @@ impl eframe::App for App {
         self.photograph_dialogs(ctx);
         self.work_list_controls(ctx);
         self.preset_panel(ctx);
+        self.multiple_exposure_panel(ctx);
         self.sync_display_controls();
         let baseline = self
             .current_material_baseline()

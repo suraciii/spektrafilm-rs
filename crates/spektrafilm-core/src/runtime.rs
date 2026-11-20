@@ -530,6 +530,19 @@ impl Runtime {
         result
     }
 
+    /// Compose an RGB stack in linear light, then run the active LUT and
+    /// post-LUT effects once. See [`crate::pipeline::RgbExposureShot`].
+    pub fn process_rgb_exposures(
+        &self,
+        shots: &[crate::pipeline::RgbExposureShot<'_>],
+        backend: &dyn ComputeBackend,
+    ) -> Result<ImageBuf, String> {
+        let started = Instant::now();
+        let result = self.pipeline.process_rgb_exposures(shots, backend);
+        self.record_elapsed(started, Some(BTreeMap::new()));
+        result
+    }
+
     /// Process with an explicit operation context while capturing the native
     /// stage evidence of the executed render. The capture observes the run;
     /// it must not change its route, parameters or output pixels.

@@ -42,7 +42,7 @@ Fresh disclosure expands Workflow, Camera, and Tone & Color. A closed inactive m
 | Print | Print material, Enlarger, Preflash, Enlarger diffusion, Print chemistry, Print base |
 | Scan | Scanner, Scan Profile, Print viewing glare, Tone & Color |
 | LUT | LUT look and LUT Grade |
-| Effects | Diffusion, RGB Halation, Grain |
+| Effects | Diffusion, RGB Light Leak, RGB Halation, Grain |
 | Output | Output, Output gamut compress, CMYK ink style |
 
 The persistent **SCAN** and **SAVE** action bar stays below the inspector. SCAN shows `full-resolution effects`; SAVE identifies its retained operation and pixel dimensions, for example `Preview · 640 × 437 px`. It writes that result without rerendering. Preview updates automatically; there is no Preview button or enablement preference. **Settings** owns general application preferences, state files and startup defaults, display configuration, and Diagnostics. Independent file-delivery options belong to the **Export options** dialog, not a photographic module.
@@ -73,7 +73,7 @@ The global **Workflow** selector above the stage list chooses **Film**, **LUT**,
 
 **Import cube as look...** in the LUT stage reads one `.cube` file. The input and output spaces, domain policy, and strength stay visible; the content hash, per-axis domain, and shaper declaration are under **Advanced declaration**. A `.cube` file carries no color-space metadata, so the sRGB spaces are an assumption to confirm, not a file fact. The domain policy defaults to **Clamp and report**: out-of-domain channels are limited to the domain edge and the affected percentage is reported. **Fail before output** is available as a strict choice. The import preview shows a neutral gray ramp and a color checker without fitting exposure, white balance, or contrast; it checks the cube declaration, not the current photograph. A changed or missing LUT file fails before output; the product does not substitute another file.
 
-**Replace cube...** keeps the current strength, LUT Grade, and Effects settings and replaces only the external cube declaration. **New look from cube...** imports a cube and resets strength and those finishing values. The **Effects** stage exposes independent Diffusion, RGB Halation, and Grain controls in RGB; it is inactive in Spectral. LUT Grade is an independent RGB module and remains available when the LUT table is inactive. Effects and LUT Grade follow the fixed LUT evaluation order. A clamp render that clips reports a persistent warning with its percentage next to the LUT controls. See [LUT transform](../specs/lut-transform/spec.md) and [LUT workflow](../specs/lut-workflow/spec.md).
+**Replace cube...** keeps the current strength, LUT Grade, and Effects settings and replaces only the external cube declaration. **New look from cube...** imports a cube and resets strength and those finishing values. The **Effects** stage exposes independent Diffusion, RGB Light Leak, RGB Halation, and Grain controls in RGB; it is inactive in Spectral. RGB Light Leak adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation. It is an appearance model, not film exposure and not a baked LUT effect. LUT Grade is an independent RGB module and remains available when the LUT table is inactive. Effects and LUT Grade follow the fixed LUT evaluation order. A clamp render that clips reports a persistent warning with its percentage next to the LUT controls. See [LUT transform](../specs/lut-transform/spec.md) and [LUT workflow](../specs/lut-workflow/spec.md).
 
 **Export film look as .cube...** belongs to Film mode. It writes one 3D `.cube` file, reports its input and output encodings and the neutralized spatial or stochastic operations, and leaves the current workflow and preset library unchanged. It does not import the exported file or create a preset.
 
@@ -213,6 +213,24 @@ For Dye inspection, use **SCAN**, then select exact **100%** zoom. [Preview and 
 **leak spectrum** is the stray-light ratio per record in cyan, magenta, yellow order. The default is the common warm path: light that crossed the film base and lost blue, so the rim reads orange-red. Measured on real leaks, the warm family spans 1.3x to 2.8x red over green with blue below green. A red-only ratio (`1.0, 0.3, 0.3`) gives the red rim that some scans show, and a cool ratio gives a front-leak rim. A strong leak still burns its core out to the film's white, because every record saturates. The rendered color is each film's own dye response, so the same stops read differently on a negative and on a reversal film.
 
 **leak texture amount** and **leak texture scale mm** add a seeded unevenness where the seal gap is uneven. The texture is stretched along the aperture, so it reads as an uneven seal rather than as drifting smoke. The seed comes from the render seed.
+
+### RGB light leak
+
+**Effects → RGB Light Leak** is the LUT/Off appearance model. It adds a tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It is independent of Film light leak and does not read film density.
+
+**RGB light leak gain** is an additive linear-light amount. **tint** is the spill color; zero gain or an all-zero tint is an exact bypass. **position** is normalized to the frame and aspect-corrected, **angle** rotates the elliptical spill, and **width** and **spread** set its compact extent. **texture** and **texture scale** add deterministic unevenness selected by **seed**.
+
+The effect is evaluated per exposure in RGB multiple exposure, then the summed linear frame passes through RGB Halation, the LUT, LUT Grade, output encoding, and Grain once.
+
+### Multiple exposure
+
+Open **Photograph → Multiple exposure** to compose two to eight exposures. The open photograph is shot 1; **Add shots…** appends equal-sized sources. Each row carries its own EV in `[-10, 10]`, and **Move earlier**, **Move later**, and **Remove** edit stack order. The panel never mixes Film and RGB groups.
+
+**Film** requires a film-forming route. Each shot runs the film exposure path and collects at `log_e_film`; development, density, DIR couplers, and grain run once. **Metering** chooses Manual, Each shot, or Lock to first. Manual applies the per-shot EV as exposed; automatic modes meter as their names say. Camera exposure compensation is zero while a stack is active.
+
+**RGB** requires LUT or Off. Each shot is decoded, EV-offset, clamped to nonnegative light, and passed through the active pre-LUT Effects; the linear frames are summed, then the LUT, LUT Grade, output encoding, and Grain run once. A partial output mix is not applied twice.
+
+Preview and Scan show the composed frame; Export writes the same composition. Equal dimensions are required before any render. Each add, remove, reorder, method, metering, or EV change is one Undo transaction. Photograph records retain the stack source paths, digests, and EVs; reopening verifies every source and offers **Reload sources** if a raster is not loaded.
 
 ## Adjustment history
 

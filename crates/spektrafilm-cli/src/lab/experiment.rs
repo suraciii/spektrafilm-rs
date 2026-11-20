@@ -141,6 +141,7 @@ fn run(args: &ExperimentRunArgs) -> Result<()> {
     let process_args = ProcessArgs {
         backend: Some(crate::Backend::Cpu),
         input: Some(input_path),
+        rgb: false,
         expose: Vec::new(),
         expose_ev: Vec::new(),
         multiple_exposure_meter: None,

@@ -11,6 +11,7 @@ mod files;
 mod history_ui;
 mod i18n;
 mod lifecycle;
+mod multiple_exposure;
 mod operator;
 mod pages;
 mod panels;

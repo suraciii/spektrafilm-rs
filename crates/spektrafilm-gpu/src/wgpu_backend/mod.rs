@@ -29,6 +29,8 @@ mod lut_grain;
 #[cfg(feature = "wgpu-backend")]
 mod lut_halation;
 #[cfg(feature = "wgpu-backend")]
+mod lut_light_leak;
+#[cfg(feature = "wgpu-backend")]
 mod lut_look;
 #[cfg(feature = "wgpu-backend")]
 mod multiple_exposure;

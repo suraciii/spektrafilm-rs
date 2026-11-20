@@ -101,6 +101,10 @@ fn accepted_params(settings: &PhotographSettings) -> RuntimeParams {
 }
 
 fn snapshot(settings: &PhotographSettings, data_dir: &Path) -> RenderSnapshot {
+    let exposure = settings
+        .multiple_exposure
+        .clone()
+        .map(|stack| crate::multiple_exposure::MultipleExposureStack::new(stack, Vec::new()));
     RenderSnapshot::new(
         accepted_params(settings),
         settings.film.clone(),
@@ -108,6 +112,7 @@ fn snapshot(settings: &PhotographSettings, data_dir: &Path) -> RenderSnapshot {
         data_dir.to_path_buf(),
         settings.special.clone(),
     )
+    .with_multiple_exposure(exposure)
 }
 
 fn captured_scope(source: &PhotographSettings, scope: CopyScope) -> Result<Option<Preset>> {

@@ -22,7 +22,11 @@ struct AddParams {
 }
 
 impl WgpuBackend {
-    fn upload_rgb_pages(&self, img: &ImageBuf, label: &str) -> Result<Vec<ImagePage>, String> {
+    pub(super) fn upload_rgb_pages(
+        &self,
+        img: &ImageBuf,
+        label: &str,
+    ) -> Result<Vec<ImagePage>, String> {
         let pages = self.allocate_image_pages(img.width, img.height, label)?;
         for page in &pages {
             let start = page.first_pixel as usize * 3;
@@ -34,7 +38,12 @@ impl WgpuBackend {
         Ok(pages)
     }
 
-    fn read_pages(&self, pages: &[ImagePage], width: u32, height: u32) -> Result<ImageBuf, String> {
+    pub(super) fn read_pages(
+        &self,
+        pages: &[ImagePage],
+        width: u32,
+        height: u32,
+    ) -> Result<ImageBuf, String> {
         let mut samples = Vec::with_capacity((width as usize) * (height as usize) * 3);
         for page in pages {
             samples.extend(f32_to_scalars(self.pipe.readback_buffer_cancellable(

@@ -29,7 +29,8 @@ mod execution;
 mod exposure;
 mod multiple_exposure;
 pub use multiple_exposure::{
-    ExposureAccumulator, ExposureShot, MultipleExposureReport, ShotMetering, ShotReport,
+    ExposureAccumulator, ExposureShot, MultipleExposureReport, RgbExposureShot, ShotMetering,
+    ShotReport,
 };
 mod material;
 mod retained;

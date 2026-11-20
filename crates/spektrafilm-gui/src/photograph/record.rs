@@ -26,6 +26,8 @@ pub(crate) struct PhotographSettings {
     pub(crate) special: serde_json::Value,
     pub(crate) raw: serde_json::Value,
     pub(crate) rotation: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) multiple_exposure: Option<crate::multiple_exposure::MultipleExposureSettings>,
     #[serde(default)]
     pub(crate) film_route: Option<String>,
     #[serde(deserialize_with = "deserialize_applied")]
@@ -443,6 +445,23 @@ fn validate_settings(settings: &PhotographSettings) -> Result<()> {
         (0..4).contains(&settings.rotation),
         Message::new("operations.record.rotation").arg("value", settings.rotation)
     );
+    if let Some(exposure) = &settings.multiple_exposure {
+        exposure.validate().map_err(|detail| {
+            Message::new("operations.record.parameters").context(anyhow::anyhow!(detail))
+        })?;
+        let mut seen = BTreeSet::new();
+        for shot in &exposure.shots {
+            ensure!(
+                shot.path.is_absolute() && seen.insert(shot.path.clone()),
+                Message::new("operations.record.parameters")
+            );
+        }
+        ensure!(
+            (exposure.method == crate::multiple_exposure::MultipleExposureMethod::Film)
+                == (settings.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Film),
+            Message::new("operations.record.parameters")
+        );
+    }
     for (name, value, keys) in [
         (
             "special",
@@ -488,10 +507,33 @@ fn validate_settings(settings: &PhotographSettings) -> Result<()> {
     Ok(())
 }
 
+fn exposures(settings: &PhotographSettings) -> Result<Vec<Dependency>> {
+    let Some(exposure) = &settings.multiple_exposure else {
+        return Ok(Vec::new());
+    };
+    exposure
+        .shots
+        .iter()
+        .map(|shot| {
+            let path = absolute(&shot.path)?;
+            let sha256 = digest(&path)?;
+            ensure!(
+                sha256 == shot.sha256,
+                Message::new("operations.record.dependencies_changed")
+            );
+            Ok(Dependency {
+                path,
+                sha256: Some(sha256),
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn dependencies(
     settings: &PhotographSettings,
     data_dir: &Path,
 ) -> Result<Vec<Dependency>> {
+    let exposure = exposures(settings)?;
     let result = (|| -> Result<Vec<Dependency>> {
         if settings.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Lut {
             let mut params = settings.params.clone();
@@ -502,13 +544,15 @@ pub(crate) fn dependencies(
             lut.load().map_err(anyhow::Error::msg)?;
             let path = absolute(&lut.path)?;
             let sha256 = digest(&path)?;
-            return Ok(vec![Dependency {
+            let mut dependencies = vec![Dependency {
                 path,
                 sha256: Some(sha256),
-            }]);
+            }];
+            dependencies.extend(exposure);
+            return Ok(dependencies);
         }
         if settings.params.workflow.mode == spektrafilm_core::params::WorkflowMode::Off {
-            return Ok(Vec::new());
+            return Ok(exposure);
         }
         let mut paths = BTreeSet::new();
         for stock in [&settings.film, &settings.print] {
@@ -650,6 +694,7 @@ pub(crate) fn dependencies(
         }
         spektrafilm_core::runtime::Runtime::new(runtime_film, runtime_print, params, data_dir)
             .map_err(anyhow::Error::msg)?;
+        dependencies.extend(exposure);
         for dependency in &dependencies {
             let current = match digest(&data_dir.join(&dependency.path)) {
                 Ok(hash) => Some(hash),
@@ -702,6 +747,7 @@ mod tests {
             special: gui.sections["special"].clone(),
             raw: gui.sections["load_raw"].clone(),
             rotation: 1,
+            multiple_exposure: None,
             film_route: Some("input > film".into()),
             applied: None,
         };
@@ -1036,6 +1082,37 @@ mod tests {
         let mut changed_lens = record;
         changed_lens.lens_model = Some("0".repeat(64));
         assert!(changed_lens.validate(None, &data).is_err());
+    }
+
+    #[test]
+    fn multiple_exposure_sources_round_trip_as_dependencies() {
+        let (dir, data, source, mut settings) = fixture();
+        let shot = dir.path().join("second-exposure.tiff");
+        std::fs::write(&shot, b"second exposure bytes").unwrap();
+        let sha256 = digest(&shot).unwrap();
+        settings.multiple_exposure = Some(crate::multiple_exposure::MultipleExposureSettings {
+            method: crate::multiple_exposure::MultipleExposureMethod::Film,
+            metering: crate::multiple_exposure::MultipleExposureMetering::Manual,
+            primary_exposure_ev: 0.5,
+            shots: vec![crate::multiple_exposure::MultipleExposureShot {
+                path: shot.clone(),
+                sha256: sha256.clone(),
+                exposure_ev: -0.5,
+            }],
+        });
+        let record = PhotographRecord::capture(&source, settings, &data).unwrap();
+        let path = dir.path().join("multiple-exposure-record.json");
+        record.save(&path).unwrap();
+        let loaded = PhotographRecord::load(&path).unwrap();
+        let exposure = loaded.settings.multiple_exposure.as_ref().unwrap();
+        assert_eq!(exposure.primary_exposure_ev, 0.5);
+        assert_eq!(exposure.shots.len(), 1);
+        assert_eq!(exposure.shots[0].sha256, sha256);
+        assert!(loaded.dependencies.iter().any(|dependency| {
+            dependency.path == shot && dependency.sha256.as_deref() == Some(sha256.as_str())
+        }));
+        std::fs::write(&shot, b"changed seconds").unwrap();
+        assert!(loaded.validate(None, &data).is_err());
     }
 
     #[cfg(unix)]
