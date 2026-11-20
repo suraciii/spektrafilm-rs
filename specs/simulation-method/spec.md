@@ -49,7 +49,7 @@ RGB does not name the output format; a Spectral simulation also outputs RGB.
 - A single-track capability MUST state why the other method has no counterpart.
 - A capability MUST NOT claim dual-track status by renaming one shared model.
 - [Halation models](../halation/spec.md) is the reference dual-track contract.
-- Its RGB scheme is calibrated to the Film visual target; pixel identity is not required.
+- Its RGB scheme is an independent appearance model; Film visual equivalence is not a target.
 
 ## Declared tracks
 
@@ -57,7 +57,7 @@ The table declares each capability's track. The owning specification states its 
 
 | Capability | Track | Owner | Relationship |
 | --- | --- | --- | --- |
-| Halation | dual-track | [Halation models](../halation/spec.md) | Separate Film and RGB schemes over one spatial response; RGB is calibrated to the Film visual target. |
+| Halation | dual-track | [Halation models](../halation/spec.md) | Separate Film and RGB schemes over one spatial response; no measured visual target is shared. |
 | Diffusion | shared | [Film chain](../film-chain/spec.md) / [LUT transform](../lut-transform/spec.md#diffusion) | One optical response at the camera, enlarger, and pre-LUT placements. |
 | Grain | dual-track | [Film grain](../film-grain/spec.md) | Film material and post-scan engines use different inputs and parameters from Effects Grain. |
 | Tone and color | shared | [Finishing](../finishing/spec.md) | One response at Scan Tone & Color and LUT Grade. |

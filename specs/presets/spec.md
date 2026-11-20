@@ -39,15 +39,15 @@ A Film preset or section preset MUST NOT carry `lut`, `effects`, or `grade`. A L
 
 ### Look pairs
 
-A look pair declares one Film preset and one RGB preset as two renderings of the same look.
+A look pair relates one Film preset and one RGB preset under one stable look identity.
 It is a library relationship, not a preset kind or a serialized document.
 
 Look pairs are built-in only; a user-owned preset MUST NOT declare a pair.
 The RGB side MAY be a built-in Effects preset; no other built-in Effects preset is admitted.
 
-A paired RGB preset MAY carry RGB Halation values calibrated to its Film preset.
-A pair MUST NOT claim cross-method equivalence without a measured fixture pass.
-A preset without a pair MUST NOT claim cross-method halation equivalence.
+A paired RGB preset MAY carry RGB Halation values authored for its Film preset.
+A look pair MUST NOT imply cross-method numerical or visual equivalence.
+A preset MUST NOT claim cross-method halation equivalence, paired or not.
 
 A built-in look pair MUST share one stable pair identity across both presets.
 The method switch MAY load the paired preset; it MUST NOT silently change the Film profile or the LUT declaration.

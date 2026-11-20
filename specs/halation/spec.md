@@ -21,21 +21,18 @@ They do not share input preparation, masks, output composition, or parameter val
 
 Effect type follows input.
 
-### Visual equivalence
+### Appearance relationship
 
-Film and RGB Halation are not pixel-identical.
-They share one spatial response and one visual target.
+Film Halation is a film-stage model.
+RGB Halation is an appearance model.
+They share one spatial response.
 
-A built-in look pair MAY claim visual equivalence only after passing the declared reference fixture.
-A pair without a measured pass MUST label itself experimental and MUST NOT claim equivalence.
+They do not share masks, values, or a measured visual target.
 
-Visual equivalence is evaluated after the display transform on the halo difference between halation on and off.
-It is defined for the RGB before-LUT position.
+An RGB workflow MUST NOT claim numerical or visual equivalence to Film Halation.
+A built-in look pair MAY share an appearance intent; the pair identity is not equivalence evidence.
 
-Pixel equality, spectral equality, and density equality are outside the target and MUST NOT be claimed.
-
-Film Halation is the visual reference.
-The RGB model is calibrated to that reference with its own mask thresholds and strengths.
+Pixel equality, spectral equality, density equality, and cross-method numerical equality are outside the target and MUST NOT be claimed.
 
 ## Shared contract
 
@@ -87,12 +84,12 @@ RGB Halation reads the RGB Input.
 
 - RGB Halation selects highlights by the maximum channel of the RGB Input.
 - It scales each channel by that channel's source amplitude.
-- Its mask thresholds are visual calibration values, not film exposure thresholds.
+- Its mask thresholds are appearance controls, not Film calibration values or film exposure thresholds.
 - The mask MUST preserve source hue.
 - A saturated red source MUST produce a red halation.
 - A saturated blue source MUST produce a blue halation.
 - Above the low threshold and below the high protection range, the added halation MUST increase with source level.
-- The effect MUST add only the positive difference between the spatial response and the mask.
+- The effect MUST add only the positive difference between the spatial response and one maximum-channel mask guard.
 - The effect MUST NOT darken the RGB Input.
 - RGB Halation runs before the LUT.
 
@@ -134,7 +131,5 @@ An inactive scheme MUST retain its stored values and MUST NOT be read or validat
 ## Acceptance
 
 1. Film mode executes Film Halation; LUT and Off execute RGB Halation.
-2. RGB Halation preserves red and blue source hue and increases with source level above the low threshold and below the high protection range.
+2. RGB Halation preserves red and blue source hue, increases with source level above the low threshold and below the high protection range, never darkens the input, and does not invert a red-dominant response into a green fringe.
 3. Film and RGB Halation parameters remain independent; neither scheme reads the other scheme's fields.
-4. A built-in pair that claims equivalence passes the reference fixture in extent, amplitude, and hue; other pairs remain experimental.
-5. A zero Film spatial scale produces no halation response and no renormalization.

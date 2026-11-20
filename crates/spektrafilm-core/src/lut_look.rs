@@ -1126,6 +1126,17 @@ impl LutLook {
         }
     }
 
+    /// All-zero sigma is an exact bypass; do not enter the linear effect branch for it.
+    fn rgb_halation_is_active(&self) -> bool {
+        self.params.halation.active
+            && self
+                .params
+                .halation
+                .sigma_um
+                .iter()
+                .any(|value| *value > 0.0)
+    }
+
     /// Render one image. `source_encoded` describes the incoming samples;
     /// `output_encoded` selects the final transfer state.
     #[allow(clippy::too_many_arguments)]
@@ -1143,15 +1154,7 @@ impl LutLook {
         self.verify_source()?;
         self.clipped_pixels.store(0, Ordering::Relaxed);
         self.evaluated_pixels.store(0, Ordering::Relaxed);
-        if self.params.halation.active
-            && self
-                .params
-                .halation
-                .sigma_um
-                .iter()
-                .any(|value| *value > 0.0)
-            && !(pixel_size_um.is_finite() && pixel_size_um > 0.0)
-        {
+        if self.rgb_halation_is_active() && !(pixel_size_um.is_finite() && pixel_size_um > 0.0) {
             return Err("RGB halation requires a positive pixel pitch".into());
         }
         // One declaration, one effect order. The device route evaluates the
@@ -1169,7 +1172,7 @@ impl LutLook {
             );
         }
         let linear_srgb = LutSpace::SrgbLinear.color_space();
-        let effects = self.params.diffusion.active || self.params.halation.active;
+        let effects = self.params.diffusion.active || self.rgb_halation_is_active();
         let mut out = image.clone();
         let (lookup_space, lookup_encoded) = if effects {
             let matrix = colorspace::conversion_matrix(source_space, &linear_srgb);
@@ -1194,7 +1197,7 @@ impl LutLook {
                     pixel_size_um.max(f64::EPSILON),
                 )?;
             }
-            if self.params.halation.active {
+            if self.rgb_halation_is_active() {
                 out = apply_rgb_halation(&out, &self.params.halation, pixel_size_um);
             }
             (linear_srgb, false)
@@ -1389,7 +1392,7 @@ impl LutLook {
             Ok(ImageBuf::from_data(image.width, image.height, out))
         };
         let linear_srgb = LutSpace::SrgbLinear.color_space();
-        let effects = self.params.diffusion.active || self.params.halation.active;
+        let effects = self.params.diffusion.active || self.rgb_halation_is_active();
         let (mut lookup, lookup_space, lookup_encoded) = if effects {
             let mut out = convert(image, source_space, source_encoded, &linear_srgb, false)?;
             if self.params.diffusion.active {
@@ -1412,7 +1415,7 @@ impl LutLook {
                     })?;
                 }
             }
-            if self.params.halation.active {
+            if self.rgb_halation_is_active() {
                 let halation = &self.params.halation;
                 let params = spektrafilm_backend::LutHalationGpuParams {
                     mask_low: halation.mask_low as f32,
@@ -1646,10 +1649,14 @@ fn apply_rgb_halation(
     );
     let mut out = image.clone();
     out.par_pixels_mut().enumerate().for_each(|(i, pixel)| {
+        // A common guard prevents a per-channel subtraction from turning a
+        // red-dominant halo into a green fringe at the source edge.
+        let guard = (0..3)
+            .map(|channel| to_f64(mask.data[i * 3 + channel]))
+            .fold(0.0_f64, f64::max);
         for (channel, value) in pixel.iter_mut().enumerate() {
-            let mask_value = to_f64(mask.data[i * 3 + channel]);
             let halo_value = to_f64(halo.data[i * 3 + channel]);
-            let addition = (halo_value - mask_value).max(0.0);
+            let addition = (halo_value - guard).max(0.0);
             *value = from_f64(to_f64(*value) + addition);
         }
     });
@@ -1915,6 +1922,143 @@ mod tests {
     }
 
     #[test]
+    fn rgb_halation_preserves_hue_and_responds_to_source_level() {
+        let params = LutHalationParams {
+            active: true,
+            mask_low: 0.2,
+            mask_high: 2.0,
+            mask_transition: 0.1,
+            sigma_um: [1.5; 3],
+            strength: [0.8; 3],
+            n_bounces: 1,
+            bounce_decay: 0.5,
+        };
+        let render = |red: f64| {
+            let mut data = vec![from_f64(0.0); 7 * 3];
+            data[3 * 3] = from_f64(red);
+            let image = ImageBuf::from_data(7, 1, data);
+            apply_rgb_halation(&image, &params, 1.0)
+        };
+        let levels = [0.15, 0.35, 0.55, 0.75];
+        let mut halo_energy = Vec::new();
+        for red in levels {
+            let rendered = render(red);
+            let mut energy = 0.0;
+            for (index, pixel) in rendered.data.as_chunks::<3>().0.iter().enumerate() {
+                assert_eq!(to_f64(pixel[1]), 0.0);
+                assert_eq!(to_f64(pixel[2]), 0.0);
+                let input = if index == 3 {
+                    to_f64(from_f64(red))
+                } else {
+                    0.0
+                };
+                let output = to_f64(pixel[0]);
+                assert!(output >= input);
+                energy += output - input;
+            }
+            halo_energy.push(energy);
+        }
+        assert_eq!(
+            halo_energy[0], 0.0,
+            "a source below the low threshold must not halo"
+        );
+        assert!(halo_energy[1..].windows(2).all(|pair| pair[1] > pair[0]));
+    }
+
+    #[test]
+    fn rgb_halation_white_source_keeps_red_dominant_channel_order() {
+        let params = LutHalationParams {
+            active: true,
+            mask_low: 0.18,
+            mask_high: 8.0,
+            mask_transition: 0.0834,
+            sigma_um: [1.5; 3],
+            strength: [1.20, 0.18, 0.01],
+            n_bounces: 1,
+            bounce_decay: 0.5,
+        };
+        let mut data = vec![from_f64(0.0); 7 * 3];
+        for channel in 0..3 {
+            data[3 * 3 + channel] = from_f64(7.0);
+        }
+        let image = ImageBuf::from_data(7, 1, data);
+        let rendered = apply_rgb_halation(&image, &params, 1.0);
+        let mut halo_energy = 0.0;
+        for (index, pixel) in rendered.data.as_chunks::<3>().0.iter().enumerate() {
+            let source = if index == 3 { 7.0 } else { 0.0 };
+            let add: [f64; 3] = std::array::from_fn(|channel| to_f64(pixel[channel]) - source);
+            assert!(add[0] >= -1.0e-9);
+            assert!(add[1] <= add[0] + 1.0e-9, "green fringe exceeded red");
+            assert!(add[2] <= add[1] + 1.0e-9, "blue fringe exceeded green");
+            halo_energy += add[0];
+        }
+        assert!(halo_energy > 0.0);
+    }
+
+    #[test]
+    fn rgb_halation_guard_blocks_cross_channel_fringe_at_a_colored_edge() {
+        let params = LutHalationParams {
+            active: true,
+            mask_low: 0.18,
+            mask_high: 8.0,
+            mask_transition: 0.0834,
+            sigma_um: [1.5; 3],
+            strength: [1.20, 0.18, 0.01],
+            n_bounces: 1,
+            bounce_decay: 0.5,
+        };
+        // A white source at pixel 4 feeds a green halo into the red-only
+        // core at pixel 2. The red pixel's own green mask is zero, so the
+        // common guard must suppress that green addition.
+        let mut data = vec![from_f64(0.0); 7 * 3];
+        for channel in 0..3 {
+            data[4 * 3 + channel] = from_f64(7.0);
+        }
+        data[2 * 3] = from_f64(7.0);
+        let image = ImageBuf::from_data(7, 1, data);
+        let rendered = apply_rgb_halation(&image, &params, 1.0);
+        let pixel = rendered.get(2, 0);
+        assert_eq!(to_f64(pixel[1]), 0.0, "green bled into the red-only core");
+        assert!(to_f64(pixel[0]) >= 7.0 - 1.0e-9);
+    }
+
+    #[test]
+    fn rgb_halation_high_protection_must_not_gate_hdr_highlights() {
+        // The original-TIFF lamp head peaks near 7.1 linear. A Film-derived
+        // protection range near 3 excludes it; the RGB appearance window must
+        // leave room for HDR highlights to seed the halo.
+        let image = {
+            let mut data = vec![from_f64(0.0); 5 * 3];
+            data[2 * 3] = from_f64(7.0);
+            ImageBuf::from_data(5, 1, data)
+        };
+        let render = |mask_high: f64| {
+            let params = LutHalationParams {
+                active: true,
+                mask_low: 0.18,
+                mask_high,
+                mask_transition: 0.0834,
+                sigma_um: [1.5; 3],
+                strength: [0.8; 3],
+                n_bounces: 1,
+                bounce_decay: 0.5,
+            };
+            apply_rgb_halation(&image, &params, 1.0)
+        };
+        assert_eq!(
+            render(2.0).data,
+            image.data,
+            "a sub-3 high window must gate out the HDR lamp head"
+        );
+        let rendered = render(8.0);
+        assert_eq!(to_f64(rendered.get(2, 0)[0]), 7.0);
+        assert!(
+            to_f64(rendered.get(1, 0)[0]) > 0.0,
+            "an HDR source below the high protection range must seed a halo"
+        );
+    }
+
+    #[test]
     fn rgb_halation_all_zero_sigma_is_an_exact_bypass() {
         let params = LutHalationParams {
             active: true,
@@ -1928,6 +2072,71 @@ mod tests {
         let image = ImageBuf::from_data(5, 1, data);
         let rendered = apply_rgb_halation(&image, &params, 1.0);
         assert_eq!(rendered.data, image.data);
+    }
+
+    #[test]
+    fn lut_look_all_zero_rgb_halation_is_an_exact_bypass() {
+        let params = LutLookParams {
+            halation: LutHalationParams {
+                active: true,
+                mask_low: 0.1,
+                sigma_um: [0.0; 3],
+                strength: [0.8; 3],
+                ..LutHalationParams::default()
+            },
+            grade_active: false,
+            ..LutLookParams::default()
+        };
+        let make_look = |active: bool| {
+            let mut params = params.clone();
+            params.halation.active = active;
+            LutLook {
+                document: identity(2),
+                params,
+                input: LutSpace::Srgb.color_space(),
+                output: LutSpace::Srgb.color_space(),
+                clipped_pixels: AtomicU64::new(0),
+                evaluated_pixels: AtomicU64::new(0),
+            }
+        };
+        let image = ImageBuf::from_data(
+            3,
+            1,
+            vec![
+                from_f64(0.02),
+                from_f64(0.4),
+                from_f64(0.8),
+                from_f64(0.1),
+                from_f64(0.2),
+                from_f64(0.3),
+                from_f64(0.9),
+                from_f64(0.7),
+                from_f64(0.5),
+            ],
+        );
+        let gamut = crate::gamut_compression::OutputGamutCompress::build(
+            &crate::params::OutputGamutCompressParams {
+                algorithm: "off".into(),
+                ..Default::default()
+            },
+            "sRGB",
+        )
+        .unwrap();
+        let render = |active: bool| {
+            make_look(active)
+                .render(
+                    &image,
+                    &LutSpace::Srgb.color_space(),
+                    true,
+                    &LutSpace::Srgb.color_space(),
+                    true,
+                    1.0,
+                    &gamut,
+                    &CpuBackend,
+                )
+                .unwrap()
+        };
+        assert_eq!(render(true).data, render(false).data);
     }
 
     #[test]
@@ -2087,7 +2296,13 @@ mod tests {
         let mut params = LutLookParams {
             halation: LutHalationParams {
                 active: true,
-                ..LutHalationParams::default()
+                mask_low: 0.18,
+                mask_high: 8.0,
+                mask_transition: 0.0834,
+                sigma_um: [1.5; 3],
+                strength: [1.20, 0.18, 0.01],
+                n_bounces: 1,
+                bounce_decay: 0.5,
             },
             grade_active: false,
             domain_max: [2.0; 3],

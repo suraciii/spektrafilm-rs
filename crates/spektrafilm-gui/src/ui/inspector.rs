@@ -1168,7 +1168,7 @@ fn effects_controls(
             .fold(0.0_f64, f64::max);
         if ui
             .add(
-                egui::Slider::new(&mut radius, 0.0..=200.0)
+                egui::Slider::new(&mut radius, 0.0..=600.0)
                     .text(crate::i18n::text(ui.ctx(), "surfaces.lut.radius")),
             )
             .changed()
@@ -1248,7 +1248,7 @@ fn effects_controls(
             for (channel, label) in ["R", "G", "B"].into_iter().enumerate() {
                 *changed |= ui
                     .add(
-                        egui::Slider::new(&mut effects.halation.sigma_um[channel], 0.0..=200.0)
+                        egui::Slider::new(&mut effects.halation.sigma_um[channel], 0.0..=600.0)
                             .text(format!(
                                 "{} {label} (µm)",
                                 crate::i18n::text(ui.ctx(), "surfaces.lut.sigma")
@@ -1279,7 +1279,7 @@ fn effects_controls(
                 .add(
                     egui::Slider::new(
                         &mut effects.halation.mask_high,
-                        (effects.halation.mask_low + 1.0e-6)..=4.0,
+                        (effects.halation.mask_low + 1.0e-6)..=16.0,
                     )
                     .text(crate::i18n::text(ui.ctx(), "surfaces.lut.mask_high")),
                 )
