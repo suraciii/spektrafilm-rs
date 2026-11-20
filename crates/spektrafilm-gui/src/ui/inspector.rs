@@ -1279,7 +1279,7 @@ fn effects_controls(
                 .add(
                     egui::Slider::new(
                         &mut effects.halation.mask_high,
-                        (effects.halation.mask_low + 1.0e-6)..=4.0,
+                        (effects.halation.mask_low + 1.0e-6)..=16.0,
                     )
                     .text(crate::i18n::text(ui.ctx(), "surfaces.lut.mask_high")),
                 )

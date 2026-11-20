@@ -2,7 +2,7 @@ schema_version = 9
 
 name = "CineStill 800T RGB"
 author = "SpektraFilm"
-description = "Experimental RGB companion to the CineStill 800T Film preset. It carries the same fitted halation first sigma, bounce count, decay, and per-channel strength; the maximum-channel mask is a separate RGB model. The pair has not passed the reference visual-equivalence fixture, so it is an appearance target, not a measured equivalence claim."
+description = "Experimental RGB appearance companion to the CineStill 800T Film preset. It carries the companion halation first sigma, bounce count, decay, and per-channel strength; the maximum-channel mask is a separate RGB model. The pair is an appearance relationship, not a measured equivalence claim."
 
 [provenance]
 implementation_version = "0.1.2"

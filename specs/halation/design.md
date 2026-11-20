@@ -121,7 +121,7 @@ where `s_c` is the per-channel strength and `L_c` is the shared spatial response
 `L_c` uses the per-channel first sigma, bounce count, and bounce decay from the [shared kernel](#shared-kernel).
 
 The RGB model MAY use a two-scale Gaussian approximation of `L_c`.
-The approximation MUST be fitted to the Film response and verified on the reference fixture.
+The approximation is an appearance choice, not a Film fit.
 It MUST preserve the declared bounce count and decay response; it MUST NOT ignore those controls.
 
 The model MUST NOT renormalize the result.
@@ -149,41 +149,26 @@ The [LUT transform](../lut-transform/spec.md#rgb-halation) owns the parameter na
 
 `LutHalationParams` is the wire type for RGB Halation; the domain term is RGB Halation.
 
-## Visual equivalence
+## Appearance target
 
-Film Halation is the visual reference for both schemes.
+RGB Halation is an appearance model.
+It has no measured Film reference and MUST NOT claim numerical or visual equivalence to Film Halation.
 
-### Reference fixture
+Its appearance target is declared by its own controls and presets.
+A built-in look pair MAY share an authored appearance intent.
+Pair membership is not evidence of equivalence.
 
-The fixture is a 3000×2000 linear-light image on the fixed 35 mm frame.
-Its neutral background is 0.18.
+Acceptance is behavioral:
 
-It carries radius-20-pixel white, red, and blue highlights.
-Grain, diffusion, light leak, and LUT Grade are inactive.
-Output is display-encoded sRGB at 100% display scale.
+- hue preservation;
+- positive-only addition;
+- monotonic response above the low threshold and below the high protection range;
+- zero-sigma bypass;
+- CPU/GPU parity.
 
-### Metrics and tolerances
-
-The comparison uses the halo difference between halation on and off.
-It measures positive peak, half-width, peak hue ΔE00, and integrated energy.
-All three highlights MUST pass.
-
-| Metric | Tolerance |
-| --- | --- |
-| Positive peak | ±10% |
-| Half-width | ±10% |
-| Peak hue | ΔE00 ≤ 2 |
-| Integrated energy | ±15% |
-
-A pair that passes the fixture MAY claim visual equivalence.
-An unmeasured or failing pair MUST label itself experimental and MUST NOT claim equivalence.
-The target applies to the before-LUT RGB position.
-
-The calibration MUST use this fixture.
-It MUST NOT read film density, film exposure, or a film profile at runtime.
-
-Pixel equality, spectral equality, and density equality are outside the target.
-The RGB model MUST NOT claim them.
+Visual review MAY compare looks.
+It MUST NOT establish Film numerical equivalence.
+Pixel, spectral, and density equality are outside the target.
 
 ## Ownership
 
@@ -224,3 +209,4 @@ The RGB model MUST NOT claim them.
 7. All-zero RGB sigma is an exact bypass; a zero channel within an active response is near-delta.
 8. The kernel returns a halo layer without strength, scatter, compression, or renormalization.
 9. A zero Film first sigma is a near-delta response; when every Film first sigma is zero, the response is inactive and no renormalization runs.
+10. No RGB parameter, preset, or look pair claims Film Halation equivalence.

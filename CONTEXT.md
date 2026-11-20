@@ -100,7 +100,7 @@ _Avoid_: Film Input, scene input
 **Film Halation**: Halation applied to the Film Input before development and scan.
 _Avoid_: In-simulation halation, pre-look halation
 
-**RGB Halation**: Halation applied to the RGB Input through a maximum-channel highlight mask.
+**RGB Halation**: An appearance model applied to the RGB Input through a maximum-channel highlight mask. It is not calibrated to Film Halation.
 _Avoid_: Look halation, LUT halation, image halation
 
 **Halation kernel**: The shared spatial point-spread response used by Film Halation and RGB Halation. It is not a render mode, input, or effect model.

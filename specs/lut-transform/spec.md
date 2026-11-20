@@ -137,8 +137,8 @@ The effect parameter group MUST expose mask low, high, transition, per-channel s
 
 - The spatial response MUST use the fixed 35 mm reference frame under [Halation models](../halation/spec.md#spatial-response).
 - The stored camera film format MUST NOT change the RGB spatial scale.
-- The mask thresholds MUST be calibrated to the Film Halation visual target.
-- They MUST NOT be described as film exposure thresholds.
+- The mask thresholds are RGB appearance controls.
+- They MUST NOT be described as Film calibration values or film exposure thresholds.
 - The parameter group MUST NOT expose film source-response, scatter, compression, or renormalization fields.
 
 ### Diffusion
