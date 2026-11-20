@@ -30,7 +30,7 @@ They share one spatial response.
 They do not share masks, values, or a measured visual target.
 
 An RGB workflow MUST NOT claim numerical or visual equivalence to Film Halation.
-A built-in look pair MAY share an appearance intent; the pair identity is not equivalence evidence.
+RGB Halation has no built-in film-stock preset; the user configures its appearance controls.
 
 Pixel equality, spectral equality, density equality, and cross-method numerical equality are outside the target and MUST NOT be claimed.
 

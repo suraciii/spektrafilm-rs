@@ -82,7 +82,7 @@ Film Multiple Exposure MUST follow the [Film chain](../film-chain/spec.md) stage
 - An inactive module MUST be an exact bypass.
 - RGB Multiple Exposure MUST accept raster input only. It MUST NOT accept camera RAW.
 - A metering policy is outside RGB Multiple Exposure. Per-exposure offsets are manual.
-- RGB Multiple Exposure MUST NOT claim Film visual or numerical equivalence. A [look pair](../presets/spec.md#look-pairs) relates product surfaces and does not establish equivalence.
+- RGB Multiple Exposure MUST NOT claim Film visual or numerical equivalence.
 
 ## Parameters
 
