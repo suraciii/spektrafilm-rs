@@ -224,7 +224,7 @@ The effect is evaluated per exposure in RGB multiple exposure, then the summed l
 
 ### Multiple exposure
 
-Open **Photographs → Multiple exposure** to compose two to eight exposures. The open photograph is shot 1; **Add shots…** appends equal-sized sources. Each row carries its own EV in `[-10, 10]`, and **Move earlier**, **Move later**, and **Remove** edit stack order. The panel never mixes Film and RGB groups.
+Open **Photographs → Multiple exposure** to compose two to eight exposures. The open photograph is shot 1; **Add shots…** appends equal-sized sources. Each row carries its own EV in `[-10, 10]`, and **Move earlier**, **Move later**, and **Remove** edit stack order. Source thumbnails identify each shot; they never alter source pixels. The panel never mixes Film and RGB groups.
 
 **Film** requires a film-forming route. Each shot runs the film exposure path and collects at `log_e_film`; development, density, DIR couplers, and grain run once. **Metering** chooses Manual, Each shot, or Lock to first. Manual applies the per-shot EV as exposed; automatic modes meter as their names say. Camera exposure compensation is zero while a stack is active.
 
