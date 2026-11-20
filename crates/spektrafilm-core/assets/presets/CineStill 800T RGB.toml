@@ -2,10 +2,10 @@ schema_version = 9
 
 name = "CineStill 800T RGB"
 author = "SpektraFilm"
-description = "Experimental RGB appearance companion to the CineStill 800T Film preset. It carries the companion halation first sigma, bounce count, decay, and per-channel strength; the maximum-channel mask is a separate RGB model. Its default high protection extends above HDR lamp highlights so the look responds to the source; the pair is an appearance relationship, not a measured equivalence claim."
+description = "Experimental RGB appearance companion to the CineStill 800T Film preset. It carries a strong HDR-facing halation with a broad red response; the maximum-channel mask is a separate RGB model. Its default high protection extends above HDR lamp highlights so the look responds to the source; the pair is an appearance relationship, not a measured equivalence claim."
 
 [provenance]
-implementation_version = "0.1.3"
+implementation_version = "0.1.4"
 model_version = "spektrafilm"
 
 [effects.halation]
@@ -13,8 +13,8 @@ active = true
 mask_low = 0.18
 mask_high = 8.0
 mask_transition = 0.0834
-sigma_um = [160.0, 160.0, 160.0]
-strength = [0.30, 0.09, 0.01]
+sigma_um = [320.0, 320.0, 320.0]
+strength = [1.20, 0.36, 0.04]
 n_bounces = 3
 bounce_decay = 0.5
 
