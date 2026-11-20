@@ -1791,6 +1791,7 @@
   "multiple_exposure.method_rgb_help": "每次曝光在线性光域解码并偏移；LUT 及其效果只执行一次。",
   "multiple_exposure.film_unavailable": "胶片多重曝光需要能形成胶片的路线。",
   "multiple_exposure.rgb_unavailable": "RGB 多重曝光需要 LUT 或 Off 工作流。",
+  "multiple_exposure.rgb_raw_unavailable": "RGB 多重曝光仅接受光栅输入。",
   "multiple_exposure.metering": "测光",
   "multiple_exposure.metering_each": "每张分别测光",
   "multiple_exposure.metering_lock_to_first": "锁定首张",

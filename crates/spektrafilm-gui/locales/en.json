@@ -1791,6 +1791,7 @@
   "multiple_exposure.method_rgb_help": "Each shot is decoded and offset in linear light; the LUT and its effects run once.",
   "multiple_exposure.film_unavailable": "Film multiple exposure needs a film-forming route.",
   "multiple_exposure.rgb_unavailable": "RGB multiple exposure needs the LUT or Off workflow.",
+  "multiple_exposure.rgb_raw_unavailable": "RGB multiple exposure accepts raster input only.",
   "multiple_exposure.metering": "Metering",
   "multiple_exposure.metering_each": "Each shot",
   "multiple_exposure.metering_lock_to_first": "Lock to first",

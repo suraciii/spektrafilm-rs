@@ -25,7 +25,8 @@ impl App {
         let mut selected = self.multiple_exposure.selected;
         let film_available =
             self.params.workflow.mode.is_film() && self.params.workflow.route_enum().exposes_film();
-        let rgb_available = !self.params.workflow.mode.is_film();
+        let primary_raw = self.image_path.as_deref().is_some_and(image_io::is_raw);
+        let rgb_available = !self.params.workflow.mode.is_film() && !primary_raw;
         egui::Window::new(crate::i18n::text(ctx, "multiple_exposure.title"))
             .id(egui::Id::new("multiple-exposure-panel"))
             .open(&mut open)
@@ -69,7 +70,12 @@ impl App {
                         crate::i18n::text(ui.ctx(), "multiple_exposure.film_unavailable"),
                     );
                 }
-                if !rgb_available && settings.method == MultipleExposureMethod::Rgb {
+                if primary_raw && settings.method == MultipleExposureMethod::Rgb {
+                    ui.colored_label(
+                        theme::WARNING,
+                        crate::i18n::text(ui.ctx(), "multiple_exposure.rgb_raw_unavailable"),
+                    );
+                } else if !rgb_available && settings.method == MultipleExposureMethod::Rgb {
                     ui.colored_label(
                         theme::WARNING,
                         crate::i18n::text(ui.ctx(), "multiple_exposure.rgb_unavailable"),

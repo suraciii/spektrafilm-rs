@@ -228,7 +228,7 @@ Open **Photographs → Multiple exposure** to compose two to eight exposures. Th
 
 **Film** requires a film-forming route. Each shot runs the film exposure path and collects at `log_e_film`; development, density, DIR couplers, and grain run once. **Metering** chooses Manual, Each shot, or Lock to first. Manual applies the per-shot EV as exposed; automatic modes meter as their names say. Camera exposure compensation is zero while a stack is active.
 
-**RGB** requires LUT or Off. Each shot is decoded, EV-offset, clamped to nonnegative light, and passed through the active pre-LUT Effects; the linear frames are summed, then the LUT, LUT Grade, output encoding, and Grain run once. A partial output mix is not applied twice.
+**RGB** requires LUT or Off and raster input; camera RAW is rejected. Each shot is decoded, EV-offset, clamped to nonnegative light, and passed through the active pre-LUT Effects; the linear frames are summed, then the LUT, LUT Grade, output encoding, and Grain run once. A partial output mix is not applied twice.
 
 Preview and Scan show the composed frame; Export writes the same composition. Equal dimensions are required before any render. Each add, remove, reorder, method, metering, or EV change is one Undo transaction. Photograph records retain the stack source paths, digests, and EVs; reopening verifies every source and offers **Reload sources** if a raster is not loaded.
 
