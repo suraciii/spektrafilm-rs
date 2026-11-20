@@ -15,8 +15,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let index = gid.x + gid.y * grid.x * 256u;
     if index >= p.n { return; }
     let base_index = index * 3u;
+    // One guard for all channels: subtracting per-channel masks can invert a
+    // red-dominant response into a green fringe at a neutral source edge.
+    let guard = max(mask[base_index], max(mask[base_index + 1u], mask[base_index + 2u]));
     for (var channel = 0u; channel < 3u; channel++) {
-        let addition = max(halo[base_index + channel] - mask[base_index + channel], 0.0);
+        let addition = max(halo[base_index + channel] - guard, 0.0);
         base[base_index + channel] += addition;
     }
 }

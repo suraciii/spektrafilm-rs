@@ -89,7 +89,7 @@ RGB Halation reads the RGB Input.
 - A saturated red source MUST produce a red halation.
 - A saturated blue source MUST produce a blue halation.
 - Above the low threshold and below the high protection range, the added halation MUST increase with source level.
-- The effect MUST add only the positive difference between the spatial response and the mask.
+- The effect MUST add only the positive difference between the spatial response and one maximum-channel mask guard.
 - The effect MUST NOT darken the RGB Input.
 - RGB Halation runs before the LUT.
 
@@ -131,5 +131,5 @@ An inactive scheme MUST retain its stored values and MUST NOT be read or validat
 ## Acceptance
 
 1. Film mode executes Film Halation; LUT and Off execute RGB Halation.
-2. RGB Halation preserves red and blue source hue, increases with source level above the low threshold and below the high protection range, and never darkens the input.
+2. RGB Halation preserves red and blue source hue, increases with source level above the low threshold and below the high protection range, never darkens the input, and does not invert a red-dominant response into a green fringe.
 3. Film and RGB Halation parameters remain independent; neither scheme reads the other scheme's fields.

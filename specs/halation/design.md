@@ -129,13 +129,22 @@ The model MUST NOT renormalize the result.
 When every RGB first sigma is zero, RGB Halation MUST be an exact bypass.
 Within an active response, a zero sigma channel uses a near-delta response.
 
-The model adds:
+The model uses one common guard:
 
 \[
-\max(0,H_c-m_c)
+m_{\mathrm{guard}}(x)=\max_c m_c(x).
+\]
+
+It adds:
+
+\[
+\max(0,H_c-m_{\mathrm{guard}})
 \]
 
 to `I_c`.
+
+The common guard is a compositing rule, not a replacement for the per-channel halo source.
+It prevents a red-dominant response from becoming a green fringe at a neutral source edge.
 
 The model MUST preserve source hue and per-channel amplitude.
 

@@ -1649,10 +1649,14 @@ fn apply_rgb_halation(
     );
     let mut out = image.clone();
     out.par_pixels_mut().enumerate().for_each(|(i, pixel)| {
+        // A common guard prevents a per-channel subtraction from turning a
+        // red-dominant halo into a green fringe at the source edge.
+        let guard = (0..3)
+            .map(|channel| to_f64(mask.data[i * 3 + channel]))
+            .fold(0.0_f64, f64::max);
         for (channel, value) in pixel.iter_mut().enumerate() {
-            let mask_value = to_f64(mask.data[i * 3 + channel]);
             let halo_value = to_f64(halo.data[i * 3 + channel]);
-            let addition = (halo_value - mask_value).max(0.0);
+            let addition = (halo_value - guard).max(0.0);
             *value = from_f64(to_f64(*value) + addition);
         }
     });
@@ -1959,6 +1963,36 @@ mod tests {
             "a source below the low threshold must not halo"
         );
         assert!(halo_energy[1..].windows(2).all(|pair| pair[1] > pair[0]));
+    }
+
+    #[test]
+    fn rgb_halation_white_source_does_not_invert_to_a_green_fringe() {
+        let params = LutHalationParams {
+            active: true,
+            mask_low: 0.18,
+            mask_high: 8.0,
+            mask_transition: 0.0834,
+            sigma_um: [1.5; 3],
+            strength: [1.20, 0.36, 0.04],
+            n_bounces: 1,
+            bounce_decay: 0.5,
+        };
+        let mut data = vec![from_f64(0.0); 7 * 3];
+        for channel in 0..3 {
+            data[3 * 3 + channel] = from_f64(7.0);
+        }
+        let image = ImageBuf::from_data(7, 1, data);
+        let rendered = apply_rgb_halation(&image, &params, 1.0);
+        let mut halo_energy = 0.0;
+        for (index, pixel) in rendered.data.as_chunks::<3>().0.iter().enumerate() {
+            let source = if index == 3 { 7.0 } else { 0.0 };
+            let add: [f64; 3] = std::array::from_fn(|channel| to_f64(pixel[channel]) - source);
+            assert!(add[0] >= -1.0e-9);
+            assert!(add[1] <= add[0] + 1.0e-9, "green fringe exceeded red");
+            assert!(add[2] <= add[1] + 1.0e-9, "blue fringe exceeded green");
+            halo_energy += add[0];
+        }
+        assert!(halo_energy > 0.0);
     }
 
     #[test]
