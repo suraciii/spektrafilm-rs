@@ -311,6 +311,8 @@ impl LutHalationParams {
     }
 }
 
+// These are stock-agnostic starting values for the RGB Halation module. A
+// built-in look may override them; they must not be tuned to a film preset.
 fn default_rgb_halation_mask_low() -> f64 {
     0.18
 }
@@ -1963,6 +1965,19 @@ mod tests {
             "a source below the low threshold must not halo"
         );
         assert!(halo_energy[1..].windows(2).all(|pair| pair[1] > pair[0]));
+    }
+
+    #[test]
+    fn rgb_halation_generic_defaults_are_stock_agnostic() {
+        let params = LutHalationParams::default();
+        assert!(!params.active);
+        assert_eq!(params.mask_low, 0.18);
+        assert_eq!(params.mask_high, 0.9);
+        assert_eq!(params.mask_transition, 0.1);
+        assert_eq!(params.sigma_um, [65.0; 3]);
+        assert_eq!(params.strength, [0.05, 0.015, 0.0]);
+        assert_eq!(params.n_bounces, 3);
+        assert_eq!(params.bounce_decay, 0.5);
     }
 
     #[test]
