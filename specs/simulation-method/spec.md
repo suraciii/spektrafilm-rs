@@ -47,6 +47,7 @@ RGB does not name the output format; a Spectral simulation also outputs RGB.
 - A shared model runs in both methods and MUST declare its input-domain mapping.
 - A dual-track capability MUST define separate input, parameters, and output composition for each method.
 - A single-track capability MUST state why the other method has no counterpart.
+- A generic creative effect MUST NOT remain single-track without an explicit product decision.
 - A capability MUST NOT claim dual-track status by renaming one shared model.
 - [Halation models](../halation/spec.md) is the reference dual-track contract.
 - Its RGB scheme is an independent appearance model; Film visual equivalence is not a target.
@@ -62,7 +63,7 @@ The table declares each capability's track. The owning specification states its 
 | Grain | dual-track | [Film grain](../film-grain/spec.md) | Film material and post-scan engines use different inputs and parameters from Effects Grain. |
 | Tone and color | shared | [Finishing](../finishing/spec.md) | One response at Scan Tone & Color and LUT Grade. |
 | Multiple exposure | dual-track | [Multiple exposure](../multiple-exposure/spec.md) | Film sums record exposure before development; RGB sums per-shot linear light before the LUT transform. |
-| Camera light leak | single-track | [Film chain](../film-chain/spec.md#camera-light-leak) | RGB has no film record exposure; a synthetic leak would be a separate effect. |
+| Light leak | dual-track | [Light leak](../light-leak/spec.md) | Film adds stray light to film raw exposure; RGB adds a synthetic linear-light spill. |
 | Print viewing glare | single-track | [Film chain](../film-chain/spec.md#scan-optics-and-print-viewing-glare) | RGB has no print readout light. |
 | Scanner lens blur | single-track | [Film chain](../film-chain/spec.md#scan-optics-and-print-viewing-glare) | RGB has no optical scan acquisition. |
 | Unsharp mask | single-track | [Film chain](../film-chain/spec.md#scan-optics-and-print-viewing-glare) | RGB has no scan sharpening stage; generic sharpening would be a separate effect. |

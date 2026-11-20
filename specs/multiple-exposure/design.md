@@ -40,7 +40,7 @@ The stack owns their per-exposure order.
 ## RGB composition
 
 Each exposure is decoded, offset, clamped to nonnegative light, and passed through the active pre-LUT effects.
-Diffusion precedes RGB Halation under the [LUT transform](../lut-transform/spec.md#color-order) order.
+Diffusion precedes Light Leak, and Light Leak precedes RGB Halation under the [LUT transform](../lut-transform/spec.md#color-order) order.
 The sum is linear light.
 
 The active LUT and LUT Grade and output encoding run after the sum.
@@ -54,6 +54,12 @@ A composite-then-halation order would make the halo depend on the sum instead of
 The RGB workflow runs the modules the user enables.
 An inactive module is an exact bypass and retains its stored values.
 RGB Multiple Exposure MUST NOT require a LUT.
+
+## GUI boundary
+
+One panel edits the stack for both methods; it is not a stage, a preset, or a second render configuration.
+The panel writes the same stack document as the CLI and uses the shared edit-history boundary.
+Source thumbnails and composition previews are presentation results, not stack inputs.
 
 ## Invariants
 
@@ -73,8 +79,8 @@ A failed memory check publishes no output.
 
 ## Non-goals
 
-- A multiple-exposure GUI inspector.
 - Per-exposure transforms.
 - Per-exposure presets.
-- RGB film metering or camera light leak.
+- Per-exposure LUT, LUT Grade, or Grain.
+- RGB film metering or spectral camera light leak; RGB Light Leak remains an active pre-LUT effect.
 - Film density composition.

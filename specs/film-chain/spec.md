@@ -186,7 +186,7 @@ This control remains separate from `halation_strength`, `halation_amount`, `boos
 - The leak MUST belong to the film stage. A frozen film record MUST NOT gain a second leak when a continuation runs the remaining stages.
 - Both execution routes MUST evaluate the same leak field for the same geometry, pitch, seed, and parameters.
 
-Camera light leak is single-track under [Simulation methods](../simulation-method/spec.md#declared-tracks).
+Camera light leak is the Film track of the dual-track [Light leak](../light-leak/spec.md) capability. The RGB track is an independent appearance model.
 
 ## Multiple exposure
 

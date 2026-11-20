@@ -6,9 +6,9 @@
 | --- | --- |
 | This capability | The multiple-exposure stack, method mapping, and Film and RGB composition. |
 | Film chain | Film record exposure, camera-side operations, development, print, and scan. |
-| LUT transform | Linear working space, per-shot Diffusion and RGB Halation, LUT, LUT Grade, output encoding, and Grain. |
+| LUT transform | Linear working space, per-shot Diffusion, RGB Light Leak, and RGB Halation, LUT, LUT Grade, output encoding, and Grain. |
 | CLI | Command surface, recipe schema, and stack errors. |
-| GUI product design | No multiple-exposure inspector. |
+| GUI product design | The Multiple Exposure panel, its placement, and its interaction with the stage inspector. |
 | Presets | No preset ownership. |
 
 ## Scope
@@ -71,14 +71,14 @@ Film Multiple Exposure MUST follow the [Film chain](../film-chain/spec.md) stage
 - Each exposure MUST clamp negative channel values to zero after the offset. Upper headroom MUST remain unclamped.
 - Each exposure MUST run the active pre-LUT effects at their [LUT transform](../lut-transform/spec.md#color-order) placement.
 - Composition MUST add linear light. It MUST NOT add density, log exposure, or encoded values.
-- RGB Multiple Exposure MUST NOT run film metering, camera light leak, film development, DIR couplers, material grain, print, or scan.
+- RGB Multiple Exposure MUST NOT run film metering, spectral camera light leak, film development, DIR couplers, material grain, print, or scan.
 - The active LUT and LUT Grade MUST run once after composition.
 - Output gamut and output encoding MUST run once after composition.
 - Active Effects Grain MUST run once after composition.
-- RGB Halation MUST see each exposure before composition.
+- RGB Light Leak and RGB Halation MUST see each exposure before composition.
 - An active LUT MUST see the composite.
 - RGB Multiple Exposure runs in the RGB workflow.
-- The LUT, LUT Grade, Diffusion, RGB Halation, and Grain modules are independently active.
+- The LUT, LUT Grade, Diffusion, RGB Light Leak, RGB Halation, and Grain modules are independently active.
 - An inactive module MUST be an exact bypass.
 - RGB Multiple Exposure MUST accept raster input only. It MUST NOT accept camera RAW.
 - A metering policy is outside RGB Multiple Exposure. Per-exposure offsets are manual.
@@ -124,11 +124,25 @@ A failed stack MUST publish no output.
 
 ## GUI
 
-A multiple-exposure inspector is outside [GUI product design](../gui-product-design/spec.md#non-goals).
-The [CLI](../cli/spec.md#multiple-exposure) is the product surface for both methods.
+The GUI MUST provide one Multiple Exposure panel for both methods. It is a photograph-level tool, not a stage and not a second control tree for the same stack.
+
+| GUI area | Requirement |
+| --- | --- |
+| Stack | Add, remove, and reorder two to eight exposures; keep one selected exposure. |
+| Exposure | Edit the per-exposure offset and source; show a source thumbnail, not a fabricated result. |
+| Method | Select Film or RGB once per stack; never mix method groups. |
+| Film group | Expose the shared capture, material, route, scan, and metering controls; expose camera-side operations per exposure. |
+| RGB group | Expose per-exposure pre-LUT effects; expose LUT, LUT Grade, output, and Grain once for the composite. |
+| Preview | Use the actual composition path at the current preview long edge; identify an incomplete or failed preview. |
+| Validation | Block rendering on geometry, method, exposure-count, offset, or memory failure; name the failed condition. |
+| History | Record each accepted stack, source, offset, method, or method-group edit as one transaction. |
+
+Selection, disclosure, and scroll position are session state, not history records.
+
+The panel MUST reject a per-exposure transform, preset, LUT, LUT Grade, or Grain edit. A method switch MUST preserve the accepted stack and stored groups; it MUST NOT combine them.
 
 ## Acceptance
 
 1. A Film stack sums record exposure and develops once.
 2. An RGB stack sums per-shot linear light; active pre-LUT effects run per shot; active post-composition modules run once.
-3. A mixed-method stack or a per-exposure transform fails before output.
+3. A mixed-method stack, per-exposure transform, or invalid GUI stack fails before output and names the failed condition.

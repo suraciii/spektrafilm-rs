@@ -8,6 +8,7 @@
 | [Render modes](../render-mode/spec.md) | Film, LUT, and RGB Effects selection; stage activation; switching and inactive-value retention |
 | [Film chain](../film-chain/spec.md) | Spectral film and print simulation |
 | [Halation models](../halation/spec.md) | Film Halation and RGB Halation model distinction |
+| [Light leak](../light-leak/spec.md) | Light-leak track relationship and the RGB appearance model |
 | [LUT delivery](../lut-delivery/spec.md) | Exporting the film chain |
 | [Tone and color](../finishing/spec.md) | Grading |
 | [Film grain](../film-grain/spec.md) | Film grain engines |
@@ -33,6 +34,7 @@ The product-level LUT export/import handoff and LUT preset lifecycle are owned b
 | Grain | Film-density or post-scan engine | Independent appearance layer | Independent appearance layer |
 | Halation model | Film Halation | RGB Halation | RGB Halation |
 | Diffuse optics | Camera or enlarger stage | Pre-LUT effect | Pre-LUT effect |
+| Light leak | Camera film stage | RGB appearance effect | RGB appearance effect |
 | Grade | Scan Tone & Color | LUT Grade | LUT Grade |
 | Spectral claims | Governed by film chain | None | None |
 
@@ -58,7 +60,7 @@ The LUT declaration MUST include:
 The supported input and output encodings are linear sRGB, display-encoded sRGB, and display-encoded Display P3. Camera-RGB LUTs are not admitted in this contract.
 
 The linear working RGB space is linear sRGB.
-Diffusion and RGB Halation evaluate in that space.
+Diffusion, Light Leak, and RGB Halation evaluate in that space.
 
 The domain policy is either fail on out-of-domain input or an explicit clamp. The import UI MUST preselect clamp, and the declaration MUST carry the selected policy. The import UI MUST expose fail as a strict option and explain both policies at the decision point.
 
@@ -78,6 +80,7 @@ LUT mode MUST use one fixed evaluation order:
 input
   → linear working RGB
   → diffusion
+  → light leak
   → RGB Halation
   → shaper / LUT input transform
   → 3D LUT
@@ -93,6 +96,7 @@ The RGB Effects workflow MUST use the same order with the shaper and LUT as exac
 input
   → linear working RGB
   → diffusion
+  → light leak
   → RGB Halation
   → LUT Grade (optional)
   → output gamut
@@ -100,7 +104,8 @@ input
   → grain
 ```
 
-- Diffusion MUST evaluate in linear light before RGB Halation.
+- Diffusion MUST evaluate in linear light before Light Leak.
+- Light Leak MUST evaluate in linear light before RGB Halation.
 - RGB Halation MUST evaluate in linear light.
 - RGB Halation MUST run before the LUT.
 - The LUT MUST remain pointwise.
@@ -110,12 +115,12 @@ input
 
 The order MUST NOT be user-reorderable. An inactive effect MUST be an exact bypass.
 
-Under [RGB Multiple Exposure](../multiple-exposure/spec.md#rgb-multiple-exposure), Diffusion and RGB Halation MUST run per exposure before composition.
+Under [RGB Multiple Exposure](../multiple-exposure/spec.md#rgb-multiple-exposure), Diffusion, Light Leak, and RGB Halation MUST run per exposure before composition.
 The active LUT and LUT Grade, output gamut, output encoding, and Grain MUST run once after composition.
 
 ## Effects
 
-The runtime root is `effects`. Its `diffusion`, `halation`, and `grain` groups are optional and each carries `active` plus its declared controls.
+The runtime root is `effects`. Its `diffusion`, `light_leak`, `halation`, and `grain` groups are optional and each carries `active` plus its declared controls.
 
 The canonical effect switch paths are `effects.<effect>.active`. Enabling or disabling one effect MUST NOT change another effect's stored values or the LUT declaration.
 
@@ -147,6 +152,14 @@ Diffusion MUST provide the existing optical diffusion responses where their decl
 
 A LUT transform that already contains lens character MUST allow diffusion to remain off. The product MUST NOT infer that a LUT contains diffusion.
 
+### Light leak
+
+RGB Light Leak runs after Diffusion and before RGB Halation under [Light leak](../light-leak/spec.md#rgb-track).
+
+It MUST add tinted linear light. It MUST NOT read film density, film exposure, a film profile, or a scan response.
+
+The LUT stage owns the stage placement. The [Light leak](../light-leak/spec.md) capability owns the RGB model and its track relationship.
+
 ### LUT Grade
 
 LUT Grade MUST use the existing [Tone and color](../finishing/spec.md) response in the root `grade` group. It MUST remain optional and MUST NOT become part of the LUT.
@@ -163,7 +176,7 @@ A seed MUST make a realization repeatable for the same input, parameters, and im
 
 ## Comparison and preview
 
-Preview, Scan, and Export MUST use the same LUT declaration, color order, and effect definitions. A reduced preview MUST NOT claim full-resolution equivalence for halation, diffusion, or grain.
+Preview, Scan, and Export MUST use the same LUT declaration, color order, and effect definitions. A reduced preview MUST NOT claim full-resolution equivalence for halation, diffusion, light leak, or grain.
 
 The product MUST provide a neutral gray ramp and a color-checker preview for an imported LUT. The preview MUST NOT auto-fit exposure, white balance, or contrast to make the LUT appear correct.
 
@@ -173,7 +186,7 @@ The product MUST provide a neutral gray ramp and a color-checker preview for an 
 
 The LUT stage MUST expose LUT import, the declared input and output spaces, the domain, the domain policy, the shaper, LUT strength, and LUT Grade.
 
-The Effects stage MUST expose independent Diffusion, RGB Halation, and Grain controls. It MUST be active in RGB and inactive in Spectral.
+The Effects stage MUST expose independent Diffusion, RGB Light Leak, RGB Halation, and Grain controls. It MUST be active in RGB and inactive in Spectral.
 
 The LUT stage MUST show all three domain axes. When a clamp render reports clipped pixels, the LUT stage MUST show a persistent warning with the clipped percentage. The warning MUST NOT depend on hovering a truncated header status.
 
@@ -211,16 +224,16 @@ A failed LUT import or render MUST preserve the preceding accepted image and par
 - Physical film simulation, spectral sensitivity, metamerism, dye density, or illuminant adaptation.
 - Scene atmosphere, fog, motion blur, temporal integration, or volumetric scene glow.
 - Multiple-exposure compositing of separate frames.
-- Camera light-leak simulation.
+- Physical film camera light-leak simulation. The RGB Light Leak is an appearance effect.
 - Local masks, subject detection, or content-aware adjustments.
 - Adobe XMP or DCP import.
 - Converting a film profile into a LUT transform.
-- Baking grain, halation, diffusion, or grade into a LUT.
+- Baking grain, halation, diffusion, light leak, or grade into a LUT.
 - Treating a LUT as a film stock or a measured material.
 
 ## Acceptance
 
 1. LUT mode applies a declared external LUT without loading film or print profiles; the RGB Effects workflow applies the same effects without a LUT; LUT Grade is independently optional; mode switching preserves inactive values.
-2. Diffusion, RGB Halation, LUT Grade, and Grain remain independently toggleable; RGB Halation runs before the LUT; LUT strength zero bypasses the LUT color transform and no spatial effect is encoded in the LUT.
+2. Diffusion, RGB Light Leak, RGB Halation, LUT Grade, and Grain remain independently toggleable; Light Leak and RGB Halation run before the LUT; LUT strength zero bypasses the LUT color transform and no spatial effect is encoded in the LUT.
 3. Missing or ambiguous color-space, domain, domain policy, shaper, file, or hash declarations fail before output without silent substitution, clipping, or fallback.
 4. A clamp render outside the declared domain clips only at the domain edge and reports the clipped fraction; fail stops the render instead. The LUT stage shows the full clipped warning and every domain axis.

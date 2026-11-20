@@ -59,6 +59,8 @@ In RGB, Film, Print, and Scan remain inspectable in the stored film chain. In Sp
 
 Several stages and modules MUST be able to remain open together.
 
+Multiple exposure is a photograph-level stack panel, not one of the seven stages. [Multiple exposure](../multiple-exposure/spec.md#gui) owns its stack behavior; this specification owns its workspace placement and interaction boundary.
+
 The inspector MUST keep search and stage navigation visible while its controls scroll. It MUST NOT contain image analysis or reserve space for it.
 
 [Image analysis](image-analysis/spec.md#workspace-and-controls) is an optional viewer workspace below the photograph. Preset and inspector scrolling MUST NOT move or resize the photograph.
@@ -172,8 +174,6 @@ Closing a dialog MUST return focus to its invoking control. Labels and state cue
 
 This specification does not introduce new film algorithms, artistic macro parameters, parameter aliases, basic/expert modes, a second preset library, media cataloging, or a new GUI framework. It does not restore retired output-lightness or draft digital-response controls. Preset thumbnails and multi-photograph work follow the owners in the [capability map](#capability-map).
 
-A multiple-exposure inspector is outside this specification for both Film and RGB. The [CLI multiple-exposure workflow](../cli/spec.md#multiple-exposure) remains that capability's product surface.
-
 The HTML design reference is not an engine implementation. Its sample values, parameter count, browser storage, image assets, and disabled engine actions are not native product contracts. Native acceptance MUST use actual source images, production controls, and real render and writer operations.
 
 ## Acceptance
@@ -184,6 +184,7 @@ The HTML design reference is not an engine implementation. Its sample values, pa
 | Choose a preset, change exposure, undo | The preset applies atomically; its modified state follows owned controls; undo restores the previous edit without rewriting the preset file. |
 | Change only the film | The print selection remains; route defaulting and scanner normalization follow their owners and are reported. |
 | Expand several modules; edit and wait for preview | Open state, scroll, and numeric focus remain usable; the image remains visible. |
+| Open Multiple Exposure, add, reorder, edit EV, then undo | The actual stack updates; invalid geometry names the failure; one accepted transaction is undone; the stage inspector remains unchanged. |
 | Use fresh disclosure and jump to Scan | Tone & Color is already expanded; its four daily controls have no row resets and no mid-word unit wrapping. |
 | Collapse an inactive module, then expand it | The closed heading retains a compact non-color state without a notice below it; the expanded module shows the actual reason without hover and does not repeat its content summary above the controls. |
 | Expand Camera and locate `camera.capture_illuminant` | Both exposure controls remain directly visible; Capture setup starts closed, the locator reveals the actual control without an edit, and Camera reset still covers the complete module. |

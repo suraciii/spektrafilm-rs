@@ -101,7 +101,7 @@ Preset export and import move only the preset document; the LUT file is external
 
 ### Effects presets
 
-An Effects preset is a complete preset for the RGB Effects workflow. It carries the `effects` root and its Diffusion, RGB Halation, and Grain groups. It carries no LUT declaration, LUT Grade, or film or print profile reference.
+An Effects preset is a complete preset for the RGB Effects workflow. It carries the `effects` root and its Diffusion, RGB Light Leak, RGB Halation, and Grain groups. It carries no LUT declaration, LUT Grade, or film or print profile reference.
 
 An Effects preset uses preset schema version 9. A version 9 document without an `effects` group or with a `lut`, `grade`, film, or print reference MUST be rejected.
 
