@@ -1966,14 +1966,14 @@ mod tests {
     }
 
     #[test]
-    fn rgb_halation_white_source_does_not_invert_to_a_green_fringe() {
+    fn rgb_halation_white_source_keeps_red_dominant_channel_order() {
         let params = LutHalationParams {
             active: true,
             mask_low: 0.18,
             mask_high: 8.0,
             mask_transition: 0.0834,
             sigma_um: [1.5; 3],
-            strength: [1.20, 0.36, 0.04],
+            strength: [1.20, 0.18, 0.01],
             n_bounces: 1,
             bounce_decay: 0.5,
         };
@@ -1993,6 +1993,33 @@ mod tests {
             halo_energy += add[0];
         }
         assert!(halo_energy > 0.0);
+    }
+
+    #[test]
+    fn rgb_halation_guard_blocks_cross_channel_fringe_at_a_colored_edge() {
+        let params = LutHalationParams {
+            active: true,
+            mask_low: 0.18,
+            mask_high: 8.0,
+            mask_transition: 0.0834,
+            sigma_um: [1.5; 3],
+            strength: [1.20, 0.18, 0.01],
+            n_bounces: 1,
+            bounce_decay: 0.5,
+        };
+        // A white source at pixel 4 feeds a green halo into the red-only
+        // core at pixel 2. The red pixel's own green mask is zero, so the
+        // common guard must suppress that green addition.
+        let mut data = vec![from_f64(0.0); 7 * 3];
+        for channel in 0..3 {
+            data[4 * 3 + channel] = from_f64(7.0);
+        }
+        data[2 * 3] = from_f64(7.0);
+        let image = ImageBuf::from_data(7, 1, data);
+        let rendered = apply_rgb_halation(&image, &params, 1.0);
+        let pixel = rendered.get(2, 0);
+        assert_eq!(to_f64(pixel[1]), 0.0, "green bled into the red-only core");
+        assert!(to_f64(pixel[0]) >= 7.0 - 1.0e-9);
     }
 
     #[test]
@@ -2269,7 +2296,13 @@ mod tests {
         let mut params = LutLookParams {
             halation: LutHalationParams {
                 active: true,
-                ..LutHalationParams::default()
+                mask_low: 0.18,
+                mask_high: 8.0,
+                mask_transition: 0.0834,
+                sigma_um: [1.5; 3],
+                strength: [1.20, 0.18, 0.01],
+                n_bounces: 1,
+                bounce_decay: 0.5,
             },
             grade_active: false,
             domain_max: [2.0; 3],
