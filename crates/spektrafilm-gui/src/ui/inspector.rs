@@ -1121,6 +1121,14 @@ fn effects_controls(
         )
         .changed();
     if effects.light_leak.active {
+        ui.label(
+            egui::RichText::new(crate::i18n::text(
+                ui.ctx(),
+                "surfaces.lut.rgb_light_leak_hint",
+            ))
+            .small()
+            .weak(),
+        );
         *changed |= ui
             .add(
                 egui::Slider::new(&mut effects.light_leak.gain, 0.0..=8.0)

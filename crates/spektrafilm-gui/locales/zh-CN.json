@@ -1704,6 +1704,7 @@
   "surfaces.lut.diffusion": "扩散",
   "surfaces.lut.rgb_halation": "RGB 光晕",
   "surfaces.lut.rgb_light_leak": "RGB 漏光",
+  "surfaces.lut.rgb_light_leak_hint": "默认是来自左上画框边缘的暖色漏光。高级位置可移动中心；放在画框边缘附近更自然。",
   "surfaces.lut.light_leak_gain": "漏光强度",
   "surfaces.lut.light_leak_width": "漏光宽度",
   "surfaces.lut.light_leak_spread": "漏光扩散",

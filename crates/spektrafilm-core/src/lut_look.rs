@@ -415,8 +415,13 @@ pub(crate) fn halation_from_json_value(
     })
 }
 
-/// RGB light leak: a compact tinted spill added in linear working RGB.
+/// RGB light leak: a tinted spill added in linear working RGB from a
+/// frame-relative aperture segment.
 /// The frame-relative geometry is independent of film light-leak millimetres.
+/// A leak is light entering through a gap on the camera edge: the field is a
+/// segment on or beyond the frame edge, with a bounded inward falloff and
+/// streak structure along the gap. The product value is an attractive
+/// accidental light, not a catalog of camera-fault looks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LutLightLeakParams {
@@ -426,12 +431,17 @@ pub struct LutLightLeakParams {
     pub gain: f64,
     #[serde(default = "default_light_leak_tint")]
     pub tint: [f64; 3],
+    /// Aperture center in normalized frame coordinates; `[-1, 1]` is the
+    /// frame, and a center on an edge places the gap there.
     #[serde(default = "default_light_leak_position")]
     pub position: [f64; 2],
+    /// Aperture direction in degrees.
     #[serde(default = "default_light_leak_angle")]
     pub angle_deg: f64,
+    /// Half-length of the aperture segment in normalized frame units.
     #[serde(default = "default_light_leak_width")]
     pub width: f64,
+    /// Inward e-folding length in normalized frame units.
     #[serde(default = "default_light_leak_spread")]
     pub spread: f64,
     #[serde(default = "default_light_leak_texture_amount")]
@@ -443,28 +453,28 @@ pub struct LutLightLeakParams {
 }
 
 fn default_light_leak_gain() -> f64 {
-    0.35
+    1.2
 }
 fn default_light_leak_tint() -> [f64; 3] {
-    [1.0, 0.62, 0.35]
+    [1.0, 0.34, 0.08]
 }
 fn default_light_leak_position() -> [f64; 2] {
-    [-0.78, 0.45]
+    [-1.0, -1.0]
 }
 fn default_light_leak_angle() -> f64 {
-    18.0
+    0.0
 }
 fn default_light_leak_width() -> f64 {
-    0.34
+    1.0 / 3.0
 }
 fn default_light_leak_spread() -> f64 {
-    0.62
+    1.0 / 3.0
 }
 fn default_light_leak_texture_amount() -> f64 {
-    0.22
+    0.20
 }
 fn default_light_leak_texture_scale() -> f64 {
-    3.0
+    5.0
 }
 
 impl Default for LutLightLeakParams {
@@ -1788,10 +1798,12 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
     let angle = leak.angle_deg.to_radians();
     let (sin_angle, cos_angle) = angle.sin_cos();
     let position = [leak.position[0] * aspect, leak.position[1]];
-    let width_sq = leak.width * leak.width;
-    let spread_sq = leak.spread * leak.spread;
-    let phase = (leak.seed % 1_048_576) as f64 / 1_048_576.0 * std::f64::consts::TAU;
+    let direction = [cos_angle, sin_angle];
+    let half = leak.width;
+    let spread = leak.spread.max(f64::EPSILON);
     let texture = leak.texture_amount > 0.0 && leak.texture_scale > 0.0;
+    let texture_scale = 0.25 / leak.texture_scale.max(f64::EPSILON);
+    let seed = leak.seed as u32;
     let mut out = image.clone();
     let out_width = image.width as usize;
     out.par_pixels_mut().enumerate().for_each(|(index, pixel)| {
@@ -1801,15 +1813,21 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         let frame_y = 2.0 * (y + 0.5) / height - 1.0;
         let dx = frame_x - position[0];
         let dy = frame_y - position[1];
-        let along = cos_angle * dx + sin_angle * dy;
-        let across = -sin_angle * dx + cos_angle * dy;
-        let falloff =
-            (-(along * along) / (2.0 * width_sq) - (across * across) / (2.0 * spread_sq)).exp();
+        let along = dx * direction[0] + dy * direction[1];
+        let across = -dx * direction[1] + dy * direction[0];
+        let closest = along.clamp(-half, half);
+        let edge_x = dx - closest * direction[0];
+        let edge_y = dy - closest * direction[1];
+        let distance = (edge_x * edge_x + edge_y * edge_y).sqrt();
+        let q = distance / spread;
+        let falloff = (-q * q).exp() * (1.0 - smoothstep(0.0, 1.0, q - 1.5));
         let modulation = if texture {
-            let u = along / leak.width * leak.texture_scale + phase;
-            let v = across / leak.spread * leak.texture_scale * 1.37 - phase * 0.73;
-            let pattern = 0.5 + 0.5 * u.sin() * v.sin();
-            1.0 - leak.texture_amount + leak.texture_amount * pattern
+            let streaks = spektrafilm_model::light_leak::streak_noise(
+                (along / (texture_scale * 3.0)) as f32,
+                (across / texture_scale) as f32,
+                seed,
+            ) as f64;
+            1.0 - leak.texture_amount + leak.texture_amount * streaks
         } else {
             1.0
         };
@@ -2307,6 +2325,52 @@ mod tests {
         params.tint = [1.0, 0.5, 0.2];
         params.active = false;
         assert_eq!(apply_rgb_light_leak(&image, &params).data, image.data);
+    }
+
+    #[test]
+    fn rgb_light_leak_generic_defaults_are_a_warm_corner_spill() {
+        let params = LutLightLeakParams::default();
+        assert!(!params.active);
+        assert_eq!(params.gain, 1.2);
+        assert_eq!(params.tint, [1.0, 0.34, 0.08]);
+        assert_eq!(params.position, [-1.0, -1.0]);
+        assert_eq!(params.angle_deg, 0.0);
+        assert_eq!(params.width, 1.0 / 3.0);
+        assert_eq!(params.spread, 1.0 / 3.0);
+        assert_eq!(params.texture_amount, 0.20);
+        assert_eq!(params.texture_scale, 5.0);
+    }
+
+    #[test]
+    fn rgb_light_leak_default_is_edge_anchored_and_compact() {
+        let params = LutLightLeakParams {
+            active: true,
+            ..LutLightLeakParams::default()
+        };
+        let image = ImageBuf::from_data(101, 67, vec![from_f64(0.0); 101 * 67 * 3]);
+        let rendered = apply_rgb_light_leak(&image, &params);
+        let mut changed = 0usize;
+        let mut changed_right = 0usize;
+        for y in 0..67 {
+            for x in 0..101 {
+                if to_f64(rendered.get(x, y)[0]) > 1.0e-3 {
+                    changed += 1;
+                    if x >= 50 {
+                        changed_right += 1;
+                    }
+                }
+            }
+        }
+        assert!(changed > 0, "the default leak must add light");
+        assert!(
+            changed_right * 50 < changed,
+            "the default leak fogged {changed_right} of {changed} changed pixels in the opposite half"
+        );
+        assert!(
+            changed * 10 < 101 * 67 * 3,
+            "the default leak covered {changed} of {} pixels",
+            101 * 67
+        );
     }
 
     #[test]

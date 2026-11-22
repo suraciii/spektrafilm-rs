@@ -156,22 +156,24 @@ spektrafilm describe --module film_render.light_leak
 
 ### RGB light leak
 
-`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. The frame is normalized to its aspect ratio; `position` is in `[-1, 1]`, `width` and `spread` are normalized lengths, and `seed` selects deterministic texture. Zero gain or a zero tint is an exact bypass.
+`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. Its default maps the Film default perimeter aperture into frame units: a warm top-left corner quarter-disc. `position` places the aperture center, `angle_deg` turns the aperture, `width` is its half-length, and `spread` is the bounded inward falloff. The frame is normalized to its aspect ratio; `position` is in `[-1, 1]`, `width` and `spread` are normalized lengths, and `seed` selects deterministic texture. Zero gain or a zero tint is an exact bypass.
 
 ```bash
 spektrafilm describe --module effects.light_leak
 ```
 
 ```bash
-# A warm corner spill on an RGB look
+# The default corner shape, written explicitly
 ./target/release/spektrafilm process input.png -o leak.tif \
     --lut look.cube \
     --set effects.light_leak.active=true \
-    --set effects.light_leak.gain=0.8 \
-    --set 'effects.light_leak.tint=[1.0,0.55,0.2]' \
-    --set 'effects.light_leak.position=[-0.6,0.3]' \
-    --set effects.light_leak.width=0.3 \
-    --set effects.light_leak.spread=0.5
+    --set effects.light_leak.gain=1.2 \
+    --set 'effects.light_leak.tint=[1.0,0.34,0.08]' \
+    --set 'effects.light_leak.position=[-1.0,-1.0]' \
+    --set effects.light_leak.width=0.3333333333333333 \
+    --set effects.light_leak.spread=0.3333333333333333 \
+    --set effects.light_leak.angle_deg=0 \
+    --set effects.light_leak.texture_amount=0.20
 ```
 
 ### Tone & Color

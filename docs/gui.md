@@ -204,7 +204,7 @@ For Dye inspection, use **SCAN**, then select exact **100%** zoom. [Preview and 
 
 ### Light leak
 
-**Film → Light leak** models stray light that reached the film while the shutter was open, through a seal gap, a door hinge, or a failed light trap. Start with **Enable light leak**.
+**Film → Light leak** models stray light that reached the film while the shutter was open, through a seal gap, a door hinge, or a failed light trap. Start with **Enable light leak**. Its default is a compact edge leak chosen as a good starting look; the measured real-sample evidence supports the topology, not a requirement to reproduce a damaged camera.
 
 **leak exposure ev** is the aperture strength in stops over the film's own mid-density exposure. The stray light is absolute: it does not scale with scene brightness, so a dark frame gains a large relative amount and a bright frame gains a small one. Zero is an exact bypass.
 
@@ -218,7 +218,9 @@ For Dye inspection, use **SCAN**, then select exact **100%** zoom. [Preview and 
 
 **Effects → RGB Light Leak** is the LUT/Off appearance model. It adds a tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It is independent of Film light leak and does not read film density.
 
-**RGB light leak gain** is an additive linear-light amount. **tint** is the spill color; zero gain or an all-zero tint is an exact bypass. **position** is normalized to the frame and aspect-corrected, **angle** rotates the elliptical spill, and **width** and **spread** set its compact extent. **texture** and **texture scale** add deterministic unevenness selected by **seed**.
+The default maps the Film default perimeter aperture into normalized frame units: a warm top-left corner quarter-disc. **gain** sets the additive linear-light amount. **tint** is the spill color; zero gain or an all-zero tint is an exact bypass.
+
+**position** places the aperture center in the aspect-corrected frame, **angle** turns the aperture direction, **width** is its half-length, and **spread** is the bounded inward falloff. Keep the aperture on a frame edge for a natural leak; a centered placement can look artificial. **texture** and **texture scale** add deterministic unevenness selected by **seed**; keep them subtle for the default look.
 
 The effect is evaluated per exposure in RGB multiple exposure. Diffusion, RGB Light Leak, and RGB Halation run on each shot before the linear frames are summed; the summed frame then passes through the LUT, LUT Grade, output encoding, and Grain once.
 

@@ -36,7 +36,7 @@ Film look and section documents use schema v7. LUT presets use schema v8 and car
 
 RGB Halation itself has no film-stock identity. Its generic, stock-agnostic starting values are inactive, `mask_low 0.18`, `mask_high 0.9`, `65 µm`, and strength `[0.05, 0.015, 0]`. Enabling it on a new RGB look starts there; users can tune any amount from that baseline.
 
-RGB Light Leak is likewise stock-agnostic and inactive by default. Its generic starting values are `gain 0.35`, warm tint `[1.0, 0.62, 0.35]`, position `[-0.78, 0.45]`, angle `18°`, width `0.34`, spread `0.62`, and mild texture. These are appearance controls, not film exposure and not a vendor preset. An Effects preset carries them with the rest of the RGB Effects parameters.
+RGB Light Leak is likewise stock-agnostic and inactive by default. Its generic starting values are `gain 1.2`, warm tint `[1.0, 0.34, 0.08]`, top-left position `[-1.0, -1.0]`, angle `0°`, width `1/3`, spread `1/3`, and texture `0.20` at scale `5`. The default maps the Film default perimeter aperture into frame units, giving a top-left corner quarter-disc; `width` is the aperture half-length and `spread` is the bounded inward falloff. These are appearance controls, not film exposure and not a vendor preset. An Effects preset carries them with the rest of the RGB Effects parameters.
 
 The built-in library provides spectral Film presets and Film section presets. It does not provide an RGB Effects preset. Users configure the RGB Effects workflow at runtime and may save their own Effects preset. The primary Radius control reaches 600 µm and Intensity reaches 4 for stronger variants. Those values are appearance controls, not Film or Dehancer calibration.
 
