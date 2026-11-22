@@ -1704,7 +1704,7 @@
   "surfaces.lut.diffusion": "Diffusion",
   "surfaces.lut.rgb_halation": "RGB Halation",
   "surfaces.lut.rgb_light_leak": "RGB Light Leak",
-  "surfaces.lut.rgb_light_leak_hint": "Default is a warm leak from the top-left frame edge. Advanced position moves the center; keep it on a frame edge for a natural look.",
+  "surfaces.lut.rgb_light_leak_hint": "Default is a full-height vertical overexposed band near the left frame edge, with a warm fringe. Advanced position moves the band; keep width at or above the frame half-height for a full-edge band.",
   "surfaces.lut.light_leak_gain": "Light leak gain",
   "surfaces.lut.light_leak_width": "Light leak width",
   "surfaces.lut.light_leak_spread": "Light leak spread",

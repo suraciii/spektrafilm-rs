@@ -1,9 +1,9 @@
 // RGB light leak: a tinted additive spill from a gap on the frame edge.
 //
-// The field is a segment with a bounded Gaussian falloff inward and seeded
-// value-noise streaks along the gap. The noise is the same integer lattice
-// used by the Film camera-light-leak field, but the geometry is frame-relative
-// and this stage reads no film data.
+// The field is a band with a flat core and a short feather inward, plus seeded
+// value-noise streaks along the gap. The noise is the same integer lattice used
+// by the Film camera-light-leak field, but the geometry is frame-relative and
+// this stage reads no film data.
 
 struct Params {
     n: u32,
@@ -103,7 +103,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let edge = offset - direction * closest;
     let distance = length(edge);
     let q = distance / max(p.spread, 1.0e-6);
-    let falloff = exp(-q * q) * (1.0 - smoothstep1(q - 1.5));
+    let falloff = exp(-q * q) * (1.0 - smoothstep1((q - 1.0) / 0.5));
 
     var modulation = 1.0;
     if p.texture_amount > 0.0 && p.texture_scale > 0.0 {

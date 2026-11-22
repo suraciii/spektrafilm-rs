@@ -416,12 +416,13 @@ pub(crate) fn halation_from_json_value(
 }
 
 /// RGB light leak: a tinted spill added in linear working RGB from a
-/// frame-relative aperture segment.
+/// frame-relative aperture band.
 /// The frame-relative geometry is independent of film light-leak millimetres.
-/// A leak is light entering through a gap on the camera edge: the field is a
-/// segment on or beyond the frame edge, with a bounded inward falloff and
-/// streak structure along the gap. The product value is an attractive
-/// accidental light, not a catalog of camera-fault looks.
+/// A leak is light entering through a gap on the camera edge. The default is a
+/// vertical overexposed band running past both frame edges, with a soft warm
+/// shoulder inward; real edge leaks read as bands and streaks, not as a
+/// centered radial glow. The product value is an attractive accidental light,
+/// not a catalog of camera-fault looks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LutLightLeakParams {
@@ -431,17 +432,19 @@ pub struct LutLightLeakParams {
     pub gain: f64,
     #[serde(default = "default_light_leak_tint")]
     pub tint: [f64; 3],
-    /// Aperture center in normalized frame coordinates; `[-1, 1]` is the
-    /// frame, and a center on an edge places the gap there.
+    /// Band center in normalized frame coordinates; `[-1, 1]` is the frame.
     #[serde(default = "default_light_leak_position")]
     pub position: [f64; 2],
-    /// Aperture direction in degrees.
+    /// Band axis in degrees; `90` is a vertical band.
     #[serde(default = "default_light_leak_angle")]
     pub angle_deg: f64,
-    /// Half-length of the aperture segment in normalized frame units.
+    /// Half-length of the band along its axis in normalized frame units.
+    /// Use a value at or above the frame half-height for a full-edge band.
     #[serde(default = "default_light_leak_width")]
     pub width: f64,
-    /// Inward e-folding length in normalized frame units.
+    /// Half-width of the band across its axis in normalized frame units.
+    /// The profile falls softly from the core and is windowed to zero at one
+    /// and a half spreads.
     #[serde(default = "default_light_leak_spread")]
     pub spread: f64,
     #[serde(default = "default_light_leak_texture_amount")]
@@ -453,25 +456,25 @@ pub struct LutLightLeakParams {
 }
 
 fn default_light_leak_gain() -> f64 {
-    1.2
+    3.0
 }
 fn default_light_leak_tint() -> [f64; 3] {
-    [1.0, 0.34, 0.08]
+    [1.0, 0.26, 0.08]
 }
 fn default_light_leak_position() -> [f64; 2] {
-    [-1.0, -1.0]
+    [-0.55, 0.0]
 }
 fn default_light_leak_angle() -> f64 {
-    0.0
+    90.0
 }
 fn default_light_leak_width() -> f64 {
-    1.0 / 3.0
+    2.0
 }
 fn default_light_leak_spread() -> f64 {
-    1.0 / 3.0
+    0.11
 }
 fn default_light_leak_texture_amount() -> f64 {
-    0.20
+    0.32
 }
 fn default_light_leak_texture_scale() -> f64 {
     5.0
@@ -1820,7 +1823,7 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         let edge_y = dy - closest * direction[1];
         let distance = (edge_x * edge_x + edge_y * edge_y).sqrt();
         let q = distance / spread;
-        let falloff = (-q * q).exp() * (1.0 - smoothstep(0.0, 1.0, q - 1.5));
+        let falloff = (-q * q).exp() * (1.0 - smoothstep(1.0, 1.5, q));
         let modulation = if texture {
             let streaks = spektrafilm_model::light_leak::streak_noise(
                 (along / (texture_scale * 3.0)) as f32,
@@ -2328,21 +2331,21 @@ mod tests {
     }
 
     #[test]
-    fn rgb_light_leak_generic_defaults_are_a_warm_corner_spill() {
+    fn rgb_light_leak_generic_defaults_are_a_warm_vertical_edge_band() {
         let params = LutLightLeakParams::default();
         assert!(!params.active);
-        assert_eq!(params.gain, 1.2);
-        assert_eq!(params.tint, [1.0, 0.34, 0.08]);
-        assert_eq!(params.position, [-1.0, -1.0]);
-        assert_eq!(params.angle_deg, 0.0);
-        assert_eq!(params.width, 1.0 / 3.0);
-        assert_eq!(params.spread, 1.0 / 3.0);
-        assert_eq!(params.texture_amount, 0.20);
+        assert_eq!(params.gain, 3.0);
+        assert_eq!(params.tint, [1.0, 0.26, 0.08]);
+        assert_eq!(params.position, [-0.55, 0.0]);
+        assert_eq!(params.angle_deg, 90.0);
+        assert_eq!(params.width, 2.0);
+        assert_eq!(params.spread, 0.11);
+        assert_eq!(params.texture_amount, 0.32);
         assert_eq!(params.texture_scale, 5.0);
     }
 
     #[test]
-    fn rgb_light_leak_default_is_edge_anchored_and_compact() {
+    fn rgb_light_leak_default_is_a_full_height_vertical_band() {
         let params = LutLightLeakParams {
             active: true,
             ..LutLightLeakParams::default()
@@ -2351,10 +2354,14 @@ mod tests {
         let rendered = apply_rgb_light_leak(&image, &params);
         let mut changed = 0usize;
         let mut changed_right = 0usize;
+        let mut rows = [false; 67];
+        let mut columns = [false; 101];
         for y in 0..67 {
             for x in 0..101 {
                 if to_f64(rendered.get(x, y)[0]) > 1.0e-3 {
                     changed += 1;
+                    rows[y as usize] = true;
+                    columns[x as usize] = true;
                     if x >= 50 {
                         changed_right += 1;
                     }
@@ -2367,9 +2374,17 @@ mod tests {
             "the default leak fogged {changed_right} of {changed} changed pixels in the opposite half"
         );
         assert!(
-            changed * 10 < 101 * 67 * 3,
+            changed * 5 < 101 * 67,
             "the default leak covered {changed} of {} pixels",
             101 * 67
+        );
+        assert!(
+            rows.iter().filter(|hit| **hit).count() > 60,
+            "the default leak must run down the frame, not sit in one corner"
+        );
+        assert!(
+            columns.iter().filter(|hit| **hit).count() < 45,
+            "the default leak must stay a narrow band, not wash the frame"
         );
     }
 

@@ -19,7 +19,7 @@ Light leak is an aesthetic finishing capability. Its value is to add a plausible
 
 Physical and measured evidence constrains whether the light looks credible. It does not decide the default look.
 
-The default MUST be a compact leak that enters from a frame edge or corner and preserves the subject's contrast and black level. A full-frame wash, an isolated centered blob, a uniform tint, or a visibly periodic texture MUST NOT be the default.
+The default MUST be a vertical overexposed band along one frame edge, with a warm visible fringe, that preserves the subject's contrast and black level. A corner patch, a full-frame wash, an isolated centered blob, a uniform tint, or a visibly periodic texture MUST NOT be the default.
 
 Diagnostic or deliberately damaged looks MAY remain reachable through explicit controls. They MUST NOT define the default, product sample, or acceptance target.
 
@@ -58,9 +58,11 @@ The RGB leak MUST be defined in the cropped composition frame. For a fixed crop,
 
 The RGB group MUST provide an active switch, a linear-light gain, a linear RGB tint, an edge aperture geometry, a texture amount, a texture scale, and a seed. The gain MUST be absolute; it MUST NOT scale with scene brightness.
 
-The RGB geometry MUST be an aperture segment on or beyond a frame edge with a bounded inward falloff. `width` is the aperture half-length and `spread` is the inward e-folding length; `angle` turns the aperture direction.
+The RGB geometry MUST be a band segment on or beyond a frame edge with a soft inward shoulder. `width` is the band half-length along its axis, `spread` is its half-width across the axis, and `angle` turns the band direction. A full-edge band uses a `width` at or above the frame half-height so its ends fall outside the frame.
 
-The initial geometry MUST reproduce the Film default perimeter shape in normalized frame units: a warm top-left corner quarter-disc with a bounded inward falloff. It MUST preserve the subject and black level. A diagonal plume, a lens-like radial glow, a centered isolated spill, full-frame fog, or visible periodic pattern MUST NOT be the default.
+The initial geometry MUST read as a vertical overexposed band near the left frame edge, running past both frame edges, with a white-hot core and an orange-red fringe. It MUST preserve the subject and black level.
+
+The default MUST NOT use a corner quarter-disc, diagonal plume, lens-like radial glow, centered isolated spill, full-frame fog, or visible periodic pattern.
 
 A zero gain, an inactive group, or an all-zero tint MUST be an exact bypass. Disabling the leak MUST retain its stored values.
 
@@ -89,5 +91,5 @@ A nonfinite value, an invalid geometry, or a value outside its declared domain M
 ## Acceptance
 
 1. Film adds edge-anchored stray exposure after camera optics and before Film Halation; an inactive leak is an exact bypass.
-2. RGB defaults add a compact edge or corner spill that preserves the subject, before RGB Halation and the LUT; an inactive or zero-gain leak is an exact bypass and reads no film data.
+2. RGB defaults add a full-height vertical edge band that preserves the subject, before RGB Halation and the LUT; an inactive or zero-gain leak is an exact bypass and reads no film data.
 3. Multiple exposure applies the active leak per exposure before composition through the method's single GUI owner.

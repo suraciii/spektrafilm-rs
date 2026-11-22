@@ -218,9 +218,9 @@ For Dye inspection, use **SCAN**, then select exact **100%** zoom. [Preview and 
 
 **Effects → RGB Light Leak** is the LUT/Off appearance model. It adds a tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It is independent of Film light leak and does not read film density.
 
-The default maps the Film default perimeter aperture into normalized frame units: a warm top-left corner quarter-disc. **gain** sets the additive linear-light amount. **tint** is the spill color; zero gain or an all-zero tint is an exact bypass.
+The default is a full-height vertical overexposed band near the left frame edge, with a white-hot core and an orange-red fringe. **gain** sets the additive linear-light amount. **tint** is the spill color; zero gain or an all-zero tint is an exact bypass.
 
-**position** places the aperture center in the aspect-corrected frame, **angle** turns the aperture direction, **width** is its half-length, and **spread** is the bounded inward falloff. Keep the aperture on a frame edge for a natural leak; a centered placement can look artificial. **texture** and **texture scale** add deterministic unevenness selected by **seed**; keep them subtle for the default look.
+**position** places the band center in the aspect-corrected frame, **angle** turns the band axis (`90` is vertical), **width** is its half-length along the axis, and **spread** is its half-width across the axis with a soft shoulder. Keep the band on or near a frame edge for a natural leak; a centered placement can look artificial. A `width` at or above the frame half-height makes the band run past both frame edges. **texture** and **texture scale** add deterministic unevenness selected by **seed**; keep them subtle for the default look.
 
 The effect is evaluated per exposure in RGB multiple exposure. Diffusion, RGB Light Leak, and RGB Halation run on each shot before the linear frames are summed; the summed frame then passes through the LUT, LUT Grade, output encoding, and Grain once.
 

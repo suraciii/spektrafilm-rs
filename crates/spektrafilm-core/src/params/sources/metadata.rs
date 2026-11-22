@@ -667,7 +667,7 @@ fn description(path: &str) -> Option<&'static str> {
             Some("Post-LUT Tone & Color response; independent from film-chain finishing.")
         }
         path if path.starts_with("effects.light_leak.") => Some(
-            "Frame-relative tinted light leak for LUT and Off modes; the default is a warm top-left corner quarter-disc matching the Film default perimeter geometry, and it adds linear light before RGB halation and the lookup.",
+            "Frame-relative tinted light leak for LUT and Off modes; the default is a full-height vertical overexposed band near the left frame edge, with a white-hot core and an orange-red fringe, added as linear light before RGB halation and the lookup.",
         ),
         path if path.starts_with("effects.halation.") => Some(
             "Halation for LUT and Off modes in linear light before the lookup; it does not read film density or a film profile.",

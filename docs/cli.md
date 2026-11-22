@@ -156,24 +156,24 @@ spektrafilm describe --module film_render.light_leak
 
 ### RGB light leak
 
-`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. Its default maps the Film default perimeter aperture into frame units: a warm top-left corner quarter-disc. `position` places the aperture center, `angle_deg` turns the aperture, `width` is its half-length, and `spread` is the bounded inward falloff. The frame is normalized to its aspect ratio; `position` is in `[-1, 1]`, `width` and `spread` are normalized lengths, and `seed` selects deterministic texture. Zero gain or a zero tint is an exact bypass.
+`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. Its default is a full-height vertical overexposed band near the left frame edge, with a white-hot core and an orange-red fringe. `position` places the band center, `angle_deg` turns the band axis (`90` is vertical), `width` is its half-length along the axis, and `spread` is its half-width across the axis with a soft shoulder. The frame is normalized to its aspect ratio; `position` is in `[-1, 1]`, `width` and `spread` are normalized lengths, and `seed` selects deterministic texture. Keep `width` at or above the frame half-height for a full-edge band. Zero gain or a zero tint is an exact bypass.
 
 ```bash
 spektrafilm describe --module effects.light_leak
 ```
 
 ```bash
-# The default corner shape, written explicitly
+# The default vertical band, written explicitly
 ./target/release/spektrafilm process input.png -o leak.tif \
     --lut look.cube \
     --set effects.light_leak.active=true \
-    --set effects.light_leak.gain=1.2 \
-    --set 'effects.light_leak.tint=[1.0,0.34,0.08]' \
-    --set 'effects.light_leak.position=[-1.0,-1.0]' \
-    --set effects.light_leak.width=0.3333333333333333 \
-    --set effects.light_leak.spread=0.3333333333333333 \
-    --set effects.light_leak.angle_deg=0 \
-    --set effects.light_leak.texture_amount=0.20
+    --set effects.light_leak.gain=3.0 \
+    --set 'effects.light_leak.tint=[1.0,0.26,0.08]' \
+    --set 'effects.light_leak.position=[-0.55,0.0]' \
+    --set effects.light_leak.width=2.0 \
+    --set effects.light_leak.spread=0.11 \
+    --set effects.light_leak.angle_deg=90 \
+    --set effects.light_leak.texture_amount=0.32
 ```
 
 ### Tone & Color
