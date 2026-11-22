@@ -82,6 +82,8 @@ A leak MUST NOT run a second time on a composed or developed output.
 
 The Film stage MUST expose the Film light-leak controls under [GUI workflow](../gui-workflow/spec.md#complete-control-access). The Effects stage MUST expose the RGB light-leak controls. Each method MUST have one editable owner.
 
+The RGB **Leak width** control MUST change the visible band thickness across the edge; a separate **Leak length** control MUST change the band extent along the edge.
+
 A Film preset MUST capture the Film group. An Effects preset MUST capture the RGB group. Built-in presets MUST NOT include an RGB light-leak preset.
 
 ## Failure

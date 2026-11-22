@@ -553,7 +553,7 @@ fn key(label: &str) -> Option<&'static str> {
         "rgb light leak position" => Some("controls.rgb_light_leak.position"),
         "rgb light leak angle" => Some("controls.rgb_light_leak.angle"),
         "rgb light leak width" => Some("controls.rgb_light_leak.width"),
-        "rgb light leak spread" => Some("controls.rgb_light_leak.spread"),
+        "rgb light leak length" => Some("controls.rgb_light_leak.length"),
         "rgb light leak texture" => Some("controls.rgb_light_leak.texture"),
         "rgb light leak texture scale" => Some("controls.rgb_light_leak.texture_scale"),
         "rgb light leak seed" => Some("controls.rgb_light_leak.seed"),

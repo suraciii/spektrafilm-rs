@@ -104,6 +104,18 @@ fn multiple_exposure_panel_composes_preview_and_scan() {
     assert!(h.state().params.effects.as_ref().unwrap().light_leak.active);
     let leaked = preview(h);
     assert_ne!(rgb.data, leaked.data);
+    // The visible width is the band thickness (`spread`), not its sweep
+    // along the edge (`width`). The length row owns the sweep.
+    reveal_control(h, "effects.light_leak.spread");
+    edit(h, "Leak width", "0.25");
+    let leak = &h.state().params.effects.as_ref().unwrap().light_leak;
+    assert!((leak.spread - 0.25).abs() < 1e-3, "spread {}", leak.spread);
+    assert!((leak.width - 2.0).abs() < 1e-3, "width {}", leak.width);
+    reveal_control(h, "effects.light_leak.width");
+    edit(h, "Leak length", "1.2");
+    let leak = &h.state().params.effects.as_ref().unwrap().light_leak;
+    assert!((leak.width - 1.2).abs() < 1e-3, "width {}", leak.width);
+    assert!((leak.spread - 0.25).abs() < 1e-3, "spread {}", leak.spread);
     search_controls(h, "");
     navigate_stage(h, controls::Stage::Input);
     reveal_control(h, "action.rotate_cw");

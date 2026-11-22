@@ -362,11 +362,12 @@ pub(crate) fn tuple_identifiers(path: &str) -> &'static [&'static str] {
         | "film_render.halation.halation_first_sigma_um"
         | "film_render.grain.rms_granularity"
         | "film_render.grain.density_min"
-        | "film_render.grain.uniformity" => CHANNEL_IDENTIFIERS,
+        | "film_render.grain.uniformity"
+        | "effects.light_leak.tint" => CHANNEL_IDENTIFIERS,
         // Gamut knee: core owns the component names.
         "io.input_gamut_compress.knee" | "io.output_gamut_compress.knee" => KNEE_IDENTIFIERS,
-        // Crop rectangle in relative coordinates.
-        "io.crop_center" | "io.crop_size" => XY_IDENTIFIERS,
+        // Frame-relative points and crop rectangles.
+        "effects.light_leak.position" | "io.crop_center" | "io.crop_size" => XY_IDENTIFIERS,
         // Digital sharpening: sigma then amount.
         "scanner.unsharp_mask" => USM_IDENTIFIERS,
         // Micro-structure: scale then clump size.

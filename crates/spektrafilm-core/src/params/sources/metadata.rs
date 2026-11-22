@@ -666,6 +666,12 @@ fn description(path: &str) -> Option<&'static str> {
         path if path.starts_with("grade.") => {
             Some("Post-LUT Tone & Color response; independent from film-chain finishing.")
         }
+        "effects.light_leak.width" => Some(
+            "Half-length of the RGB leak band along its axis in normalized frame units. At or above the frame half-height the band runs past both frame edges. The GUI labels this Leak length.",
+        ),
+        "effects.light_leak.spread" => Some(
+            "Half-width of the RGB leak band across its axis in normalized frame units; the profile falls softly from the core and is windowed to zero at one and a half spreads. The GUI labels this Leak width.",
+        ),
         path if path.starts_with("effects.light_leak.") => Some(
             "Frame-relative tinted light leak for LUT and Off modes; the default is a full-height vertical overexposed band near the left frame edge, with a white-hot core and an orange-red fringe, added as linear light before RGB halation and the lookup.",
         ),
