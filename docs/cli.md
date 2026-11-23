@@ -156,24 +156,24 @@ spektrafilm describe --module film_render.light_leak
 
 ### RGB light leak
 
-`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. Its default is a wide warm vertical edge glow anchored at the left frame edge, brightest at the edge and falling inward softly, with a roughened inner edge and slow intensity variation along the band. The default gain does not impose a white core; bright detail can still reach white where the added light exceeds the display range. `position` places the band center, `angle_deg` turns the band axis (`90` is vertical), `width` is its half-length along the axis, and `spread` is its half-width across the axis with a soft shoulder. Texture strength also roughens the edge and varies intensity; it does not apply a broad symmetric taper, and zero leaves a smooth band. The frame is normalized to its aspect ratio; `position` is in `[-1, 1]`, `width` and `spread` are normalized lengths, and `seed` selects deterministic texture. The GUI labels the visible thickness (`spread`) **Leak width** and the axis half-length (`width`) **Leak length**; the CLI keeps the parameter names. Keep `width` at or above the frame half-height for a full-edge band. Zero gain or a zero tint is an exact bypass.
+`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. Its default is a broad warm glow from a short top-edge aperture at the left corner, brightest near the corner and falling inward softly, with a roughened aperture and slow intensity variation. The default gain does not impose a white core; bright detail can still reach white where the added light exceeds the display range. `position` places the aperture center, `angle_deg` turns the aperture axis (`0` runs along the top edge, `90` down a side), `width` is its half-length along the axis, and `spread` is its half-width across the axis with a soft shoulder. Texture strength also roughens the aperture and varies intensity; it does not apply a broad symmetric taper, and zero leaves a smooth glow. The frame is normalized to its aspect ratio; `position` is in `[-1, 1]`, `width` and `spread` are normalized lengths, and `seed` selects deterministic texture. The GUI labels the visible thickness (`spread`) **Leak width** and the axis half-length (`width`) **Leak length**; the CLI keeps the parameter names. Keep `width` at or above the frame half-height for a full-edge band. Zero gain or a zero tint is an exact bypass.
 
 ```bash
 spektrafilm describe --module effects.light_leak
 ```
 
 ```bash
-# The default warm vertical edge glow, written explicitly
+# The default warm top-left edge glow, written explicitly
 ./target/release/spektrafilm process input.png -o leak.tif \
     --lut look.cube \
     --set effects.light_leak.active=true \
-    --set effects.light_leak.gain=0.7 \
-    --set 'effects.light_leak.tint=[1.0,0.45,0.18]' \
-    --set 'effects.light_leak.position=[-0.98,0.0]' \
-    --set effects.light_leak.width=2.0 \
-    --set effects.light_leak.spread=0.16 \
-    --set effects.light_leak.angle_deg=90 \
-    --set effects.light_leak.texture_amount=0.20
+    --set effects.light_leak.gain=1.05 \
+    --set 'effects.light_leak.tint=[1.0,0.38,0.07]' \
+    --set 'effects.light_leak.position=[-0.98,-0.98]' \
+    --set effects.light_leak.width=0.28 \
+    --set effects.light_leak.spread=0.35 \
+    --set effects.light_leak.angle_deg=0 \
+    --set effects.light_leak.texture_amount=0.30
 ```
 
 ### Tone & Color
