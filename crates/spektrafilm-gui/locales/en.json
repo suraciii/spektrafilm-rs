@@ -1704,7 +1704,7 @@
   "surfaces.lut.diffusion": "Diffusion",
   "surfaces.lut.rgb_halation": "RGB Halation",
   "surfaces.lut.rgb_light_leak": "RGB Light Leak",
-  "surfaces.lut.rgb_light_leak_hint": "Default is a wide warm edge glow anchored at the left frame edge, brightest at the edge and falling inward softly, with a roughened inner edge and slow intensity variation. The default gain does not clip to white; raise it to burn the core. Leak width sets the visible thickness; Leak length sets the run along the edge. Keep length at or above the frame half-height for a full-edge band.",
+  "surfaces.lut.rgb_light_leak_hint": "Default is a wide warm edge glow anchored at the left frame edge, brightest at the edge and falling inward softly, with a roughened inner edge and slow intensity variation. The default gain does not impose a white core; bright detail can still reach white, and raising it burns further. Leak width sets the visible thickness; Leak length sets the run along the edge. Keep length at or above the frame half-height for a full-edge band.",
   "surfaces.lut.light_leak_gain": "Leak gain",
   "surfaces.lut.light_leak_gain_help": "Additive linear-light intensity of the leak. Zero is an exact bypass.",
   "surfaces.lut.light_leak_width": "Leak width",

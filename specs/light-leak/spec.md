@@ -64,7 +64,9 @@ The RGB group MUST provide an active switch, a linear-light gain, a linear RGB t
 
 The RGB geometry MUST be a band segment on or beyond a frame edge with a soft inward shoulder. `width` is the band half-length along its axis, `spread` is its half-width across the axis, and `angle` turns the band direction. A full-edge band uses a `width` at or above the frame half-height so its ends fall outside the frame.
 
-The initial geometry MUST read as a wide warm vertical edge glow anchored at the left frame edge, running past both frame edges, with a soft inward falloff and no clipped white core at the default gain. Its texture controls MUST roughen the edge and vary the intensity along its length; a broad symmetric taper MUST NOT be the result.
+The initial geometry MUST read as a wide warm vertical edge glow anchored at the left frame edge, running past both frame edges, with a soft inward falloff and no imposed white column at the default gain.
+
+Bright detail MAY still reach white where the added light exceeds the display range. Its texture controls MUST roughen the edge and vary the intensity along its length; a broad symmetric taper MUST NOT be the result.
 
 Zero texture MUST leave a smooth, uniform-width band. The leak MUST preserve the subject and black level.
 
@@ -99,5 +101,5 @@ A nonfinite value, an invalid geometry, or a value outside its declared domain M
 ## Acceptance
 
 1. Film adds edge-anchored stray exposure after camera optics and before Film Halation; an inactive leak is an exact bypass.
-2. RGB defaults add a wide, soft, warm full-height vertical edge glow that preserves the subject and does not clip to white, before RGB Halation and the LUT. An inactive or zero-gain leak is an exact bypass and reads no film data.
+2. RGB defaults add a wide, soft, warm full-height vertical edge glow that preserves the subject and does not impose a white column, before RGB Halation and the LUT. An inactive or zero-gain leak is an exact bypass and reads no film data.
 3. Multiple exposure applies the active leak per exposure before composition through the method's single GUI owner.

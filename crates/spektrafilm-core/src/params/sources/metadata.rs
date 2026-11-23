@@ -673,7 +673,7 @@ fn description(path: &str) -> Option<&'static str> {
             "Half-width of the RGB leak band across its axis in normalized frame units; the profile is a Gaussian falloff with no hard cutoff, negligible by two and a half spreads. Texture roughens this width along the band without a broad symmetric taper. The GUI labels this Leak width.",
         ),
         path if path.starts_with("effects.light_leak.") => Some(
-            "Frame-relative tinted light leak for LUT and Off modes; the default is a wide warm vertical edge glow anchored at the left frame edge, brightest at the edge and falling inward softly, with a roughened edge and slow intensity variation. The default gain does not clip the core to white; raising gain can drive it toward white. Added as linear light before RGB halation and the lookup.",
+            "Frame-relative tinted light leak for LUT and Off modes; the default is a wide warm vertical edge glow anchored at the left frame edge, brightest at the edge and falling inward softly, with a roughened edge and slow intensity variation. The default gain does not impose a white core; bright detail can still reach white where the added light exceeds the display range. Added as linear light before RGB halation and the lookup.",
         ),
         path if path.starts_with("effects.halation.") => Some(
             "Halation for LUT and Off modes in linear light before the lookup; it does not read film density or a film profile.",
