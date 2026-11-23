@@ -33,8 +33,11 @@ struct Params {
 const PI: f32 = 3.141592653589793;
 const LEAK_SHOULDER_SCALE: f32 = 0.48;
 const LEAK_CORE_RATIO: f32 = 0.55;
-const LEAK_BURN_START: f32 = 1.0;
-const LEAK_BURN_END: f32 = 2.2;
+const LEAK_BURN_START: f32 = 0.7;
+const LEAK_BURN_END: f32 = 1.7;
+const LEAK_HOTSPOT_CENTER: f32 = 0.08;
+const LEAK_HOTSPOT_WIDTH: f32 = 0.22;
+const LEAK_HOTSPOT_FLOOR: f32 = 0.22;
 
 fn hash2(x: u32, y: u32, seed: u32) -> f32 {
     var h = seed ^ 0x9E3779B9u;
@@ -85,12 +88,6 @@ fn streak_noise(x: f32, y: f32, seed: u32) -> f32 {
     return sum / norm;
 }
 
-fn seeded_band_structure(along: f32, seed: u32) -> vec2<f32> {
-    let width = smoothstep1((streak_noise(along * 3.7, 0.37, seed + 0x9E3779B9u) - 0.2) / 0.6);
-    let intensity = smoothstep1((streak_noise(along * 0.73, 0.73, seed + 0x85EBCA77u) - 0.2) / 0.6);
-    return vec2<f32>(width, intensity);
-}
-
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) grid: vec3<u32>) {
     let index = gid.x + gid.y * grid.x * 256u;
@@ -116,29 +113,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let distance = length(edge);
 
     let texture_on = p.texture_amount > 0.0 && p.texture_scale > 0.0;
-    var width_variation = 0.0;
-    var band_envelope = 1.0;
-    var burn_weight = 1.0;
-    var width_noise = 0.5;
-    if texture_on {
-        let slow = seeded_band_structure(along, p.seed);
-        width_noise = slow.x;
-        width_variation = p.texture_amount * 0.35 * (slow.x * 2.0 - 1.0);
-        band_envelope = max(1.0 + p.texture_amount * (5.0 * slow.y - 2.5), 0.05);
-        burn_weight = 0.15 + 1.1 * slow.y;
-    }
-    let local_spread = max(p.spread * (1.0 + width_variation), 1.0e-6);
+    let local_spread = max(p.spread, 1.0e-6);
     let q = distance / local_spread;
     let shoulder = exp(-q * q);
-    var core_width = local_spread * LEAK_CORE_RATIO;
-    var core_shift = 0.0;
-    if texture_on {
-        core_width = local_spread * LEAK_CORE_RATIO * (0.55 + 0.9 * width_noise);
-        core_shift = p.texture_amount * 0.40 * (width_noise * 2.0 - 1.0) * local_spread;
-    }
-    let across_axis = vec2<f32>(-direction.y, direction.x);
-    let core_distance = length(edge - across_axis * core_shift);
-    let core = exp(-(core_distance / core_width) * (core_distance / core_width));
+    let core_width = local_spread * LEAK_CORE_RATIO;
+    let core = exp(-(distance / core_width) * (distance / core_width));
 
     var modulation = 1.0;
     if texture_on {
@@ -148,18 +127,18 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
             across / texture_scale,
             p.seed,
         );
-        modulation = 1.0 - p.texture_amount + p.texture_amount * streaks;
+        modulation = 1.0 - 0.5 * p.texture_amount + 0.5 * p.texture_amount * streaks;
     }
 
-    let envelope = modulation * band_envelope;
-    let amplitude = p.gain * LEAK_SHOULDER_SCALE * shoulder * envelope;
-    let core_amplitude = p.gain * core * envelope;
+    let amplitude = p.gain * LEAK_SHOULDER_SCALE * shoulder * modulation;
+    let hotspot = exp(-((along - LEAK_HOTSPOT_CENTER) / LEAK_HOTSPOT_WIDTH) * ((along - LEAK_HOTSPOT_CENTER) / LEAK_HOTSPOT_WIDTH));
+    let core_amplitude = p.gain * core * modulation
+        * (LEAK_HOTSPOT_FLOOR + (1.0 - LEAK_HOTSPOT_FLOOR) * hotspot);
     let burn = smoothstep1(
-        (core_amplitude * burn_weight - LEAK_BURN_START)
-            / (LEAK_BURN_END - LEAK_BURN_START),
+        (core_amplitude - LEAK_BURN_START) / (LEAK_BURN_END - LEAK_BURN_START),
     );
     let tint = vec3<f32>(p.tint_r, p.tint_g, p.tint_b);
-    let hot = vec3<f32>(1.0, 0.90, 0.75);
+    let hot = vec3<f32>(1.0, 0.92, 0.80);
     let base = index * 3u;
     pixels[base] = source[base] + amplitude * tint.r + core_amplitude * (hot.r - tint.r) * burn;
     pixels[base + 1u] = source[base + 1u] + amplitude * tint.g + core_amplitude * (hot.g - tint.g) * burn;

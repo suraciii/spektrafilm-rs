@@ -1704,7 +1704,7 @@
   "surfaces.lut.diffusion": "Diffusion",
   "surfaces.lut.rgb_halation": "RGB Halation",
   "surfaces.lut.rgb_light_leak": "RGB Light Leak",
-  "surfaces.lut.rgb_light_leak_hint": "Default is a vertical warm burn along the left frame edge, with a narrow hot core and a wider red-orange shoulder. Gain is leak exposure: partial exposure stays red-orange, while full exposure burns the core toward white and leaves the shoulder warm. Leak width sets the visible thickness; Leak length sets the run along the edge. Increase length toward the frame half-height for a full-edge band.",
+  "surfaces.lut.rgb_light_leak_hint": "Default is a vertical warm burn along the left frame edge, with a narrow hot core and a wider red-orange shoulder. The hot core peaks in one broad region; texture adds fine streaks without carving low-frequency lobes. Gain is leak exposure: partial exposure stays red-orange, while full exposure burns the core toward white and leaves the shoulder warm. Leak width sets the visible thickness; Leak length sets the run along the edge. Increase length toward the frame half-height for a full-edge band.",
   "surfaces.lut.light_leak_gain": "Leak exposure",
   "surfaces.lut.light_leak_gain_help": "Leak exposure as an additive linear-light gain. Partial exposure stays red-orange; full exposure burns the core toward white. Zero is an exact bypass.",
   "surfaces.lut.light_leak_width": "Leak width",

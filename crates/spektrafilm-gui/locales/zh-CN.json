@@ -1704,7 +1704,7 @@
   "surfaces.lut.diffusion": "扩散",
   "surfaces.lut.rgb_halation": "RGB 光晕",
   "surfaces.lut.rgb_light_leak": "RGB 漏光",
-  "surfaces.lut.rgb_light_leak_hint": "默认是沿画幅左缘进入的纵向暖色烧灼，中心是狭窄的白热核心，外围是更宽的红橙色肩部。强度即漏光曝光：曝光不足时保持红橙色，完全过曝时核心烧向白色，肩部仍保持暖色。漏光宽度控制可见厚度，漏光长度控制沿边缘的延伸；长度增加到画幅半高时可形成贯穿边缘的条带。",
+  "surfaces.lut.rgb_light_leak_hint": "默认是沿画幅左缘进入的纵向暖色烧灼，中心是狭窄的白热核心，外围是更宽的红橙色肩部；白核只在一个宽区域达到峰值，纹理只增加细颗粒，不切割低频团块。强度即漏光曝光：曝光不足时保持红橙色，完全过曝时核心烧向白色，肩部仍保持暖色。漏光宽度控制可见厚度，漏光长度控制沿边缘的延伸；长度增加到画幅半高时可形成贯穿边缘的条带。",
   "surfaces.lut.light_leak_gain": "漏光曝光",
   "surfaces.lut.light_leak_gain_help": "以叠加线性光增益表示的漏光曝光：曝光不足时保持红橙色，完全过曝时核心烧向白色；0 为精确旁路。",
   "surfaces.lut.light_leak_width": "漏光宽度",

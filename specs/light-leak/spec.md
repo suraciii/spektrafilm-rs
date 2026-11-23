@@ -21,7 +21,7 @@ Physical and measured evidence constrains whether the light looks credible. It d
 
 The default MUST be a warm vertical glow entering from one frame edge, with a narrow hot core and a softer red-orange shoulder, that preserves subject contrast and black level.
 
-The glow MUST read as light burning through an edge aperture. Its intensity MUST vary along the aperture, and its core MUST brighten toward white as leak exposure rises. It MUST NOT form a flat clipped bar, a uniform white column, a circular patch, or a symmetric spindle.
+The glow MUST read as light burning through an edge aperture. Its intensity MUST vary along the aperture, and its core MUST brighten toward white as leak exposure rises. It MUST NOT form a flat clipped bar, a uniform white column, a circular patch, a symmetric spindle, or a chain of low-frequency lobes.
 
 A full-frame wash, an isolated centered blob, a uniform tint, a hard-edged bar, or a visibly periodic texture MUST NOT be the default.
 
@@ -68,7 +68,7 @@ The initial geometry MUST read as a vertical burn entering along the left frame 
 
 The gain MUST be the leak exposure control. At partial exposure the leak MUST remain red-orange; at full exposure its core MUST burn toward white while the shoulder stays warm. The transition MUST be continuous, without a hard threshold or banded step.
 
-Bright detail MAY still reach white where the added light exceeds the display range. Texture controls MUST roughen the aperture, vary the intensity along its length, and break the hot core into uneven segments; a broad symmetric taper or a uniform white bar MUST NOT be the result.
+Bright detail MAY still reach white where the added light exceeds the display range. Texture controls MUST add fine-scale streaks and edge roughness. They MUST NOT carve low-frequency lobes, torn patches, or disjoint blobs, and a broad symmetric taper or a uniform white bar MUST NOT be the result.
 
 Zero texture MUST leave a smooth glow. The leak MUST preserve the subject and black level.
 

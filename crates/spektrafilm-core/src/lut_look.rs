@@ -469,8 +469,13 @@ const LEAK_SHOULDER_SCALE: f64 = 0.48;
 /// Hot-core e-folding length as a fraction of the warm shoulder spread.
 const LEAK_CORE_RATIO: f64 = 0.55;
 /// Core exposure range over which the warm tint burns toward white.
-const LEAK_BURN_START: f64 = 1.0;
-const LEAK_BURN_END: f64 = 2.2;
+const LEAK_BURN_START: f64 = 0.7;
+const LEAK_BURN_END: f64 = 1.7;
+/// One broad hot region along the aperture. It keeps the burn from becoming a
+/// uniform white column while avoiding random low-frequency lobes.
+const LEAK_HOTSPOT_CENTER: f64 = 0.08;
+const LEAK_HOTSPOT_WIDTH: f64 = 0.22;
+const LEAK_HOTSPOT_FLOOR: f64 = 0.22;
 
 fn default_light_leak_gain() -> f64 {
     2.0
@@ -485,10 +490,10 @@ fn default_light_leak_angle() -> f64 {
     90.0
 }
 fn default_light_leak_width() -> f64 {
-    0.45
+    0.50
 }
 fn default_light_leak_spread() -> f64 {
-    0.20
+    0.16
 }
 fn default_light_leak_texture_amount() -> f64 {
     0.45
@@ -1813,28 +1818,6 @@ fn smoothstep(edge0: f64, edge1: f64, value: f64) -> f64 {
 /// intensity. Both are sampled in the band's own frame, so the structure
 /// follows the same gesture as the leak.
 #[inline]
-fn seeded_band_structure(along: f64, seed: u32) -> (f64, f64) {
-    let width = smoothstep(
-        0.2,
-        0.8,
-        spektrafilm_model::light_leak::streak_noise(
-            (along * 3.7) as f32,
-            0.37,
-            seed.wrapping_add(0x9E37_79B9),
-        ) as f64,
-    );
-    let intensity = smoothstep(
-        0.2,
-        0.8,
-        spektrafilm_model::light_leak::streak_noise(
-            (along * 0.73) as f32,
-            0.73,
-            seed.wrapping_add(0x85EB_CA77),
-        ) as f64,
-    );
-    (width, intensity)
-}
-
 fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf {
     if !leak.is_active() || image.width == 0 || image.height == 0 {
         return image.clone();
@@ -1862,61 +1845,30 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         let dy = frame_y - position[1];
         let along = dx * direction[0] + dy * direction[1];
         let across = -dx * direction[1] + dy * direction[0];
-        let (width_noise, intensity_noise) = if texture {
-            seeded_band_structure(along, seed)
-        } else {
-            (0.5, 0.5)
-        };
-        let width_variation = if texture {
-            leak.texture_amount * 0.35 * (width_noise * 2.0 - 1.0)
-        } else {
-            0.0
-        };
-        let local_spread = (spread * (1.0 + width_variation)).max(f64::EPSILON);
         let closest = along.clamp(-half, half);
         let edge_x = dx - closest * direction[0];
         let edge_y = dy - closest * direction[1];
         let distance = (edge_x * edge_x + edge_y * edge_y).sqrt();
-        let q = distance / local_spread;
+        let q = distance / spread;
         let shoulder = (-q * q).exp();
-        let core_width = if texture {
-            local_spread * LEAK_CORE_RATIO * (0.55 + 0.9 * width_noise)
-        } else {
-            local_spread * LEAK_CORE_RATIO
-        };
-        let core_shift = if texture {
-            leak.texture_amount * 0.40 * (width_noise * 2.0 - 1.0) * local_spread
-        } else {
-            0.0
-        };
-        let core_x = edge_x - core_shift * -direction[1];
-        let core_y = edge_y - core_shift * direction[0];
-        let core_distance = (core_x * core_x + core_y * core_y).sqrt();
-        let core = (-(core_distance / core_width).powi(2)).exp();
+        let core = (-(distance / (spread * LEAK_CORE_RATIO)).powi(2)).exp();
         let modulation = if texture {
             let streaks = spektrafilm_model::light_leak::streak_noise(
                 (along / (texture_scale * 3.0)) as f32,
                 (across / texture_scale) as f32,
                 seed,
             ) as f64;
-            1.0 - leak.texture_amount + leak.texture_amount * streaks
+            1.0 - 0.5 * leak.texture_amount + 0.5 * leak.texture_amount * streaks
         } else {
             1.0
         };
-        let band_envelope = if texture {
-            (1.0 + leak.texture_amount * (5.0 * intensity_noise - 2.5)).max(0.05)
-        } else {
-            1.0
-        };
-        let envelope = modulation * band_envelope;
-        let amplitude = leak.gain * LEAK_SHOULDER_SCALE * shoulder * envelope;
-        let core_amplitude = leak.gain * core * envelope;
-        let burn_weight = if texture {
-            0.15 + 1.1 * intensity_noise
-        } else {
-            1.0
-        };
-        let burn = smoothstep(LEAK_BURN_START, LEAK_BURN_END, core_amplitude * burn_weight);
+        let amplitude = leak.gain * LEAK_SHOULDER_SCALE * shoulder * modulation;
+        let hotspot = (-((along - LEAK_HOTSPOT_CENTER) / LEAK_HOTSPOT_WIDTH).powi(2)).exp();
+        let core_amplitude = leak.gain
+            * core
+            * modulation
+            * (LEAK_HOTSPOT_FLOOR + (1.0 - LEAK_HOTSPOT_FLOOR) * hotspot);
+        let burn = smoothstep(LEAK_BURN_START, LEAK_BURN_END, core_amplitude);
         for channel in 0..3 {
             let added = amplitude * leak.tint[channel]
                 + core_amplitude * (LEAK_HOT_TINT[channel] - leak.tint[channel]) * burn;
@@ -2422,8 +2374,8 @@ mod tests {
         assert_eq!(params.tint, [1.0, 0.26, 0.05]);
         assert_eq!(params.position, [-0.98, 0.0]);
         assert_eq!(params.angle_deg, 90.0);
-        assert_eq!(params.width, 0.45);
-        assert_eq!(params.spread, 0.20);
+        assert_eq!(params.width, 0.50);
+        assert_eq!(params.spread, 0.16);
         assert_eq!(params.texture_amount, 0.45);
         assert_eq!(params.texture_scale, 3.0);
     }
@@ -2494,7 +2446,7 @@ mod tests {
     }
 
     #[test]
-    fn rgb_light_leak_texture_breaks_the_hot_core_into_segments() {
+    fn rgb_light_leak_texture_stays_fine_grained_without_macro_lobes() {
         let image = ImageBuf::from_data(401, 267, vec![from_f64(0.0); 401 * 267 * 3]);
         let textured = apply_rgb_light_leak(
             &image,
@@ -2513,52 +2465,43 @@ mod tests {
                 ..LutLightLeakParams::default()
             },
         );
-        let white_widths = |rendered: &ImageBuf| {
+        let profile = |rendered: &ImageBuf| {
             (0..267)
-                .map(|y| {
-                    (0..401)
-                        .filter(|x| {
-                            let pixel = rendered.get(*x, y);
-                            pixel.iter().all(|value| to_f64(*value) > 1.0)
-                        })
-                        .count()
-                })
+                .map(|y| (0..80).map(|x| to_f64(rendered.get(x, y)[0])).sum::<f64>() / 80.0)
                 .collect::<Vec<_>>()
         };
-        let textured_widths = white_widths(&textured);
-        let smooth_widths = white_widths(&smooth);
-        let textured_rows = textured_widths.iter().filter(|width| **width > 0).count();
-        let smooth_rows = smooth_widths.iter().filter(|width| **width > 0).count();
-        let textured_spread = textured_widths
+        let textured_profile = profile(&textured);
+        let smooth_profile = profile(&smooth);
+        let textured_mean = textured_profile.iter().sum::<f64>() / 267.0;
+        let smooth_mean = smooth_profile.iter().sum::<f64>() / 267.0;
+        let covariance = textured_profile
             .iter()
-            .filter(|width| **width > 0)
-            .max()
-            .unwrap_or(&0)
-            - textured_widths
-                .iter()
-                .filter(|width| **width > 0)
-                .min()
-                .unwrap_or(&0);
-        let smooth_spread = smooth_widths
+            .zip(&smooth_profile)
+            .map(|(textured, smooth)| (textured - textured_mean) * (smooth - smooth_mean))
+            .sum::<f64>();
+        let textured_variance = textured_profile
             .iter()
-            .filter(|width| **width > 0)
-            .max()
-            .unwrap_or(&0)
-            - smooth_widths
-                .iter()
-                .filter(|width| **width > 0)
-                .min()
-                .unwrap_or(&0);
-        println!(
-            "textured rows {textured_rows} spread {textured_spread}; smooth rows {smooth_rows} spread {smooth_spread}"
+            .map(|value| (value - textured_mean).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        let smooth_variance = smooth_profile
+            .iter()
+            .map(|value| (value - smooth_mean).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        let correlation = covariance / (textured_variance * smooth_variance);
+        let max_row_delta = textured_profile
+            .iter()
+            .zip(&smooth_profile)
+            .map(|(textured, smooth)| (textured - smooth).abs())
+            .fold(0.0_f64, f64::max);
+        assert!(
+            correlation > 0.995,
+            "texture must not reshape the band into macro lobes: correlation {correlation}"
         );
         assert!(
-            textured_rows > 0 && smooth_rows > 0,
-            "both fields must burn part of the core"
-        );
-        assert!(
-            textured_spread > smooth_spread,
-            "texture must vary the hot-core width, not leave a uniform column: textured spread {textured_spread}, smooth spread {smooth_spread}"
+            max_row_delta < 0.08,
+            "texture must stay fine-grained, not carve large row-scale blobs: max row delta {max_row_delta}"
         );
     }
 
@@ -2672,7 +2615,7 @@ mod tests {
         let gpu = spektrafilm_gpu::test_support::explicit_adapter();
         let leak = LutLightLeakParams {
             active: true,
-            gain: 0.8,
+            gain: 3.0,
             tint: [1.0, 0.55, 0.2],
             position: [-0.6, 0.3],
             angle_deg: 23.0,
