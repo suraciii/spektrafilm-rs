@@ -167,11 +167,11 @@ spektrafilm describe --module effects.light_leak
 ./target/release/spektrafilm process input.png -o leak.tif \
     --lut look.cube \
     --set effects.light_leak.active=true \
-    --set effects.light_leak.gain=1.05 \
-    --set 'effects.light_leak.tint=[1.0,0.38,0.07]' \
+    --set effects.light_leak.gain=1.15 \
+    --set 'effects.light_leak.tint=[1.0,0.40,0.08]' \
     --set 'effects.light_leak.position=[-0.98,-0.98]' \
-    --set effects.light_leak.width=0.28 \
-    --set effects.light_leak.spread=0.35 \
+    --set effects.light_leak.width=0.30 \
+    --set effects.light_leak.spread=0.38 \
     --set effects.light_leak.angle_deg=0 \
     --set effects.light_leak.texture_amount=0.30
 ```

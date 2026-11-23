@@ -462,10 +462,10 @@ pub struct LutLightLeakParams {
 }
 
 fn default_light_leak_gain() -> f64 {
-    1.05
+    1.15
 }
 fn default_light_leak_tint() -> [f64; 3] {
-    [1.0, 0.38, 0.07]
+    [1.0, 0.40, 0.08]
 }
 fn default_light_leak_position() -> [f64; 2] {
     [-0.98, -0.98]
@@ -474,10 +474,10 @@ fn default_light_leak_angle() -> f64 {
     0.0
 }
 fn default_light_leak_width() -> f64 {
-    0.28
+    0.30
 }
 fn default_light_leak_spread() -> f64 {
-    0.35
+    0.38
 }
 fn default_light_leak_texture_amount() -> f64 {
     0.30
@@ -2383,12 +2383,12 @@ mod tests {
     fn rgb_light_leak_generic_defaults_are_a_warm_top_left_edge_glow() {
         let params = LutLightLeakParams::default();
         assert!(!params.active);
-        assert_eq!(params.gain, 1.05);
-        assert_eq!(params.tint, [1.0, 0.38, 0.07]);
+        assert_eq!(params.gain, 1.15);
+        assert_eq!(params.tint, [1.0, 0.40, 0.08]);
         assert_eq!(params.position, [-0.98, -0.98]);
         assert_eq!(params.angle_deg, 0.0);
-        assert_eq!(params.width, 0.28);
-        assert_eq!(params.spread, 0.35);
+        assert_eq!(params.width, 0.30);
+        assert_eq!(params.spread, 0.38);
         assert_eq!(params.texture_amount, 0.30);
         assert_eq!(params.texture_scale, 3.0);
     }
