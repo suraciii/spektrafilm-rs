@@ -693,24 +693,10 @@ pub(crate) fn run_with_data_dir(args: ProcessArgs, data: DataSelection) -> Resul
         return crate::multiple_exposure::run(&args, &data);
     }
     reject_multiple_only_flags(&args)?;
-    run_with_capture(args, data, None)
+    run_with_data_dir_inner(args, data)
 }
 
-/// Instrument-owned native observation request, never a public parser option.
-#[cfg(feature = "precision-f64")]
-pub(crate) fn run_with_native_capture(
-    args: ProcessArgs,
-    data: DataSelection,
-    directory: &Path,
-) -> Result<()> {
-    run_with_capture(args, data, Some(directory))
-}
-
-fn run_with_capture(
-    mut args: ProcessArgs,
-    data: DataSelection,
-    capture: Option<&Path>,
-) -> Result<()> {
+fn run_with_data_dir_inner(mut args: ProcessArgs, data: DataSelection) -> Result<()> {
     // Legacy complete baselines may retain an image-input partial route. Do not
     // infer artifact continuation: that input always requires explicit --route.
     if args.workflow.route.is_none()
@@ -732,24 +718,8 @@ fn run_with_capture(
             route.artifact_input().is_some() || route.artifact_output().is_some()
         })
     {
-        if capture.is_some() {
-            bail!("native research capture requires an image-output route");
-        }
         return stage::run(&args, &data);
     }
-    let evidence_paths = capture
-        .map(|directory| {
-            let mut paths = vec![
-                directory.join("stage-evidence.json"),
-                directory.join("stage-evidence.json.tmp"),
-            ];
-            for stage in spektrafilm_core::stage_evidence::StageId::ORDER {
-                paths.push(directory.join(format!("{}.f64", stage.id())));
-                paths.push(directory.join(format!("{}.f64.tmp", stage.id())));
-            }
-            paths
-        })
-        .unwrap_or_default();
     let mut protected = vec![args.input_path()];
     if let Some(output) = args.output.as_deref() {
         protected.push(output);
@@ -769,24 +739,13 @@ fn run_with_capture(
             .filter(|source| source.ends_with(".toml") || source.ends_with(".json"))
             .map(Path::new),
     );
-    let invocation_path_count = protected.len();
-    protected.extend(evidence_paths.iter().map(PathBuf::as_path));
     telemetry::run(
         spektrafilm_core::telemetry::OperationKind::Process,
         args.diagnostics.as_deref(),
         args.gpu_timings,
         &protected,
         telemetry::requested_backend(args.backend),
-        |invocation| {
-            cmd_process(
-                &args,
-                &data,
-                invocation,
-                &protected[..invocation_path_count],
-                &evidence_paths,
-                capture,
-            )
-        },
+        |invocation| cmd_process(&args, &data, invocation),
     )?;
     Ok(())
 }
@@ -795,9 +754,6 @@ fn cmd_process(
     args: &ProcessArgs,
     data: &DataSelection,
     invocation: &mut telemetry::Invocation,
-    protected: &[&Path],
-    evidence_paths: &[PathBuf],
-    capture: Option<&Path>,
 ) -> Result<()> {
     let input = args.input.as_deref().context("input image is required")?;
     let output = args.output.as_deref();
@@ -825,7 +781,6 @@ fn cmd_process(
     let sources = &args.sources;
     let dry_run = args.dry_run;
     let raw_out = args.raw_out.as_deref();
-    let stage_evidence = capture;
     let iters = args.iters;
     let backend_choice = args.backend;
     let data_dir = &data.path;
@@ -978,12 +933,6 @@ fn cmd_process(
             params.random_seed,
             if dry_run { " not" } else { " not yet" }
         );
-    }
-    if stage_evidence.is_some() {
-        // Configuration-level rejection, before dry run or rendering: the
-        // capture route must not run a configuration it cannot describe.
-        spektrafilm_core::stage_evidence::ensure_supported_params(&params)
-            .map_err(anyhow::Error::msg)?;
     }
     let inject = params
         .taps
@@ -1188,40 +1137,6 @@ fn cmd_process(
         }
         return Ok(());
     }
-    if let Some(directory) = stage_evidence {
-        // Prepare the bundle destination before rendering: the terminal
-        // manifest is the completeness token, so a stale one from an earlier
-        // run must not survive into a run that fails before publication.
-        std::fs::create_dir_all(directory).with_context(|| {
-            format!("creating stage-evidence directory: {}", directory.display())
-        })?;
-        let manifest = directory.join("stage-evidence.json");
-        spektrafilm_core::telemetry::validate_report_destination(&manifest, protected)
-            .with_context(|| {
-                format!(
-                    "stage-evidence destination conflicts: {}",
-                    manifest.display()
-                )
-            })?;
-        match std::fs::remove_file(&manifest) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "removing stale stage-evidence manifest: {}",
-                        manifest.display()
-                    )
-                });
-            }
-        }
-        for path in evidence_paths.iter().skip(1) {
-            spektrafilm_core::telemetry::validate_report_destination(path, protected)
-                .with_context(|| {
-                    format!("stage-evidence destination conflicts: {}", path.display())
-                })?;
-        }
-    }
     let backend = invocation.phase(
         "backend_init",
         IssueCategory::Backend,
@@ -1242,10 +1157,6 @@ fn cmd_process(
         },
     )?;
     eprintln!("Backend: {}", backend.name());
-    if stage_evidence.is_some() {
-        spektrafilm_core::stage_evidence::ensure_supported_backend(backend.as_ref())
-            .map_err(anyhow::Error::msg)?;
-    }
     if grain_dye_active {
         eprintln!(
             "Backend (effective): {}",
@@ -1367,7 +1278,6 @@ fn cmd_process(
             .set_render_configuration(runtime.telemetry_configuration());
     }
     let output_attempt = std::cell::Cell::new(0);
-    let mut stage_capture = stage_evidence.map(spektrafilm_core::stage_evidence::StageCapture::new);
     // The host preview raster is built on demand and reused across iterations:
     // a retained run never needs one, and `--iters` timings must not include a
     // per-iteration host resize that the reference measured once.
@@ -1380,9 +1290,6 @@ fn cmd_process(
                 let simulation_backend =
                     spektrafilm_backend::bind_backend(backend.as_ref(), simulation_context.clone());
                 if let InputSamples::Device(source) = image {
-                    if stage_capture.is_some() {
-                        bail!("stage evidence requires the CPU reference backend");
-                    }
                     let request = match preview_max_size {
                         Some(max_size) => {
                             spektrafilm_core::pipeline::RetainedRender::preview(max_size)
@@ -1416,7 +1323,7 @@ fn cmd_process(
                 // selected backend owns the complete route; metering, geometry,
                 // film/scan work, and output composition then never return to
                 // the host before the writer's sample conversion.
-                let retained = if stage_capture.is_none() {
+                let retained = {
                     let request = preview_max_size.map_or(
                         spektrafilm_core::pipeline::RetainedRender::FULL,
                         spektrafilm_core::pipeline::RetainedRender::preview,
@@ -1429,8 +1336,6 @@ fn cmd_process(
                         collect,
                     );
                     retained.map_err(|e| anyhow::anyhow!("pipeline retained: {e}"))?
-                } else {
-                    None
                 };
                 let out = match retained {
                     Some(retained) if collect.is_some_and(|tap| tap != Tap::RgbOut) => {
@@ -1455,23 +1360,7 @@ fn cmd_process(
                             }
                             _ => image.clone(),
                         };
-                        let host = if let Some(capture) =
-                            stage_capture.as_mut().filter(|_| index == iters as u64)
-                        {
-                            // Stage evidence observes the published run only:
-                            // with --iters the warm-cache iterations are not
-                            // the captured execution.
-                            runtime
-                                .process_captured(
-                                    image,
-                                    backend.as_ref(),
-                                    inject,
-                                    collect,
-                                    simulation_context,
-                                    capture,
-                                )
-                                .map_err(|e| anyhow::anyhow!("pipeline stage evidence: {e}"))?
-                        } else if inject.is_none() && collect.is_none() {
+                        let host = if inject.is_none() && collect.is_none() {
                             runtime
                                 .process_observed(image, backend.as_ref(), simulation_context)
                                 .map_err(anyhow::Error::msg)?
@@ -1648,29 +1537,6 @@ fn cmd_process(
                     .with_context(|| format!("creating raw_out file: {}", p.display()))?;
                 f.write_all(bytes)?;
                 eprintln!("raw f64 buffer: {} ({} values)", p.display(), buf.len());
-                Ok(())
-            },
-        )?;
-    }
-
-    // The stage-evidence bundle publishes last: its terminal manifest is the
-    // completeness token, so an output or capture failure can never leave
-    // complete-looking evidence behind. An incomplete bundle is a command
-    // failure, distinct from optional telemetry persistence.
-    if let Some(capture) = stage_capture.as_mut() {
-        invocation.phase(
-            "file_write",
-            IssueCategory::Writing,
-            IssueBoundary::FileWrite,
-            &context,
-            |_| {
-                capture
-                    .publish()
-                    .map_err(|e| anyhow::anyhow!("stage evidence: {e}"))?;
-                eprintln!(
-                    "stage evidence: {}",
-                    capture.destination().join("stage-evidence.json").display()
-                );
                 Ok(())
             },
         )?;

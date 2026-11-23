@@ -24,7 +24,7 @@ requirements, packaging, and the full command list live in
 - `just ci-pr` is the required pull request gate: formatting, Python cache
   checks, and the fast precision test profile.
 - `just ci` runs the full local gate: `fmt`, `check`, `check-f64`, `clippy`,
-  `test`, `test-f64`, `benchmark-test`, and `parity-backend`.
+  `test`, `test-f64`, `lab-test`, and `parity-backend`.
 - `just verify-pr <dir>` and `just verify <dir>` retain gate output with source
   provenance.
 
@@ -34,7 +34,7 @@ in the pull request. The required evidence depends on the change:
 
 | Change | Required evidence |
 | --- | --- |
-| Numerical or pipeline behavior | Measured before/after results; `just parity-backend` or `just benchmark-test` where applicable |
+| Numerical or pipeline behavior | Measured before/after results; `just parity-backend` or `just lab-test` where applicable |
 | GUI | Screenshots, or `just gui-headless`, `just gui-layout`, and `just gui-raw` output |
 | LUT export | The exported LUT and a rendered comparison |
 | CLI, image I/O, or RAW decoding | A run through the real binary with the affected input |

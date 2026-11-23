@@ -33,5 +33,4 @@ The illuminant pair is a property of the measured set, not of the invocation: it
 ## Acceptance
 
 - On a frozen measured-spectra set, the values MUST agree with the frozen Python evaluation of the calibration method within a relative tolerance of 1e-9.
-- On a synthetic chart, film raw log-exposure values MUST cross-check against the `log_e_film` native observation retained by dedicated `experiment run` with optical scatter and camera auto-exposure off. The [native observation contract](../native-observations.md) governs those values and does not add a capture option to ordinary rendering.
 - Repeated runs on identical inputs MUST produce identical values.

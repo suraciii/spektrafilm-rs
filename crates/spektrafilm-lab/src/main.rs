@@ -1,17 +1,18 @@
 //! `spektrafilm-lab`: quantify the color science of delivered images.
 //!
-//! The lab renders nothing and presents nothing. It decodes delivered rasters
-//! with the measurement library's reader, runs the shared metric
-//! implementations, and publishes immutable analysis and comparison records.
-//! Rendering endpoints live in `spektrafilm-f64`; evaluation and presentation
-//! live in `spektrafilm-bench`.
+//! The lab renders nothing. It decodes delivered rasters with the measurement
+//! library's reader, runs the shared metric implementations, and publishes
+//! immutable analysis and comparison records. It also reads those records back,
+//! joins retained reading records, projects what a comparison measured, and
+//! builds the offline reports. Rendering endpoints live in `spektrafilm-f64`.
 
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
-use spektrafilm_benchmark::{documents, local_input, regions};
+use spektrafilm_lab::{documents, regions};
 
-mod images;
+mod cli_images;
+mod surface;
 
 #[derive(Parser)]
 #[command(
@@ -33,9 +34,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Quantify the color science of one delivered image set.
-    Analyze(images::AnalyzeArgs),
-    /// Quantify how two delivered image sets differ.
-    Compare(images::Args),
+    Analyze(cli_images::AnalyzeArgs),
+    /// Quantify a difference: two delivered image sets, or two retained reading records.
+    Compare(CompareArgs),
     /// Expand one finite grid declaration into explicit regions.
     Regions(GridArgs),
     /// Print a document's authoritative schema, or decide one document.
@@ -53,9 +54,58 @@ enum Commands {
         #[arg(long, value_name = "FILE")]
         check: Option<PathBuf>,
     },
+    /// Read the declared sample points of a delivered image.
+    Sample {
+        #[command(flatten)]
+        args: spektrafilm_lab::sample::MeasureSampleArgs,
+    },
+    /// Project a retained comparison's evidence without presenting it.
+    Inspect(surface::InspectArgs),
+    /// Build one offline report.
+    Report {
+        #[command(subcommand)]
+        command: surface::ReportCommand,
+    },
     /// An endpoint that belongs to another binary.
     #[command(external_subcommand)]
     External(Vec<String>),
+}
+
+/// Image comparison takes no subcommand; a record comparison does. One binary,
+/// two inputs: delivered images, or retained reading records.
+#[derive(Args)]
+struct CompareArgs {
+    /// Compare two retained reading records instead of two images.
+    #[command(subcommand)]
+    command: Option<surface::CompareCommand>,
+    /// Baseline file, or a directory of delivered images.
+    #[arg(long, value_name = "PATH")]
+    baseline: Option<PathBuf>,
+    /// Candidate file, or a directory of delivered images.
+    #[arg(long, value_name = "PATH")]
+    candidate: Option<PathBuf>,
+    /// Declared color space and transfer state of both sides.
+    #[arg(long, value_name = "SPACE:STATE")]
+    declaration: Option<cli_images::Declaration>,
+    /// Declared region: name=x,y,w,h[:role]. Repeats.
+    #[arg(
+        long = "roi",
+        value_name = "ID=X,Y,W,H[:ROLE]",
+        conflicts_with = "regions"
+    )]
+    roi: Vec<String>,
+    /// Authored regions document in render coordinates.
+    #[arg(long, value_name = "FILE")]
+    regions: Option<PathBuf>,
+    /// Built-in analysis profile.
+    #[arg(long, value_name = "ID", value_parser = cli_images::profiles())]
+    analysis: Option<String>,
+    /// Box-average retained difference maps to one sample per NxN block.
+    #[arg(long, value_name = "N")]
+    map_scale: Option<u32>,
+    /// New comparison directory; must not exist.
+    #[arg(long, value_name = "DIR")]
+    out: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -130,41 +180,31 @@ fn parse_size(value: &str) -> Result<[u64; 2], String> {
     Ok([width, height])
 }
 
-fn decide(kind: &str, file: &std::path::Path) -> spektrafilm_benchmark::Result<serde_json::Value> {
+fn decide(kind: &str, file: &std::path::Path) -> spektrafilm_lab::Result<serde_json::Value> {
     let display = file.display().to_string();
-    let value = if matches!(kind, "run" | "comparison" | "analysis") {
-        let root = file.parent().ok_or_else(|| {
-            spektrafilm_benchmark::Error::new("invalid_path", "Manifest has no parent")
-        })?;
+    let value = if matches!(kind, "comparison" | "analysis") {
+        let root = file
+            .parent()
+            .ok_or_else(|| spektrafilm_lab::Error::new("invalid_path", "Manifest has no parent"))?;
         documents::load_json_document(file).and_then(|value| {
             documents::validate_generated_document(kind, &value, root)?;
             Ok(value)
         })
     } else {
         match kind {
-            "suite" => documents::load_suite(file),
-            "target" => documents::load_target(file),
-            "policy" => documents::load_policy(file),
-            "configuration" | "reference" | "regions" | "preparation" => {
-                local_input::load(kind, file)
-            }
-            "stimuli" | "material_measurement" | "correspondence_review" | "experiment" => {
-                documents::validate_authored_document(kind, file)
-            }
+            "regions" => documents::load_regions(file),
             // `document` prints any packaged schema; deciding one needs a rule.
             // A kind with a schema and no rule says exactly that, because the
             // alternative is a vocabulary that silently differs between the two
             // halves of one endpoint.
-            _ if documents::schema_kinds().contains(&kind) => {
-                Err(spektrafilm_benchmark::Error::new(
-                    "unvalidatable_document_kind",
-                    format!(
-                        "`document` has no rule for `{kind}`; the packaged schema is still \
+            _ if documents::schema_kinds().contains(&kind) => Err(spektrafilm_lab::Error::new(
+                "unvalidatable_document_kind",
+                format!(
+                    "`document` has no rule for `{kind}`; the packaged schema is still \
                          printed by `document --kind {kind}`"
-                    ),
-                ))
-            }
-            _ => Err(spektrafilm_benchmark::Error::new(
+                ),
+            )),
+            _ => Err(spektrafilm_lab::Error::new(
                 "unknown_document_kind",
                 format!("unknown document kind: {kind}"),
             )),
@@ -172,25 +212,6 @@ fn decide(kind: &str, file: &std::path::Path) -> spektrafilm_benchmark::Result<s
     }
     .map_err(|e| e.file(display))?;
     let unchecked = match kind {
-        "policy" => serde_json::json!([
-            "selector_applicability",
-            "measurement_selection",
-            "protocol_binding",
-            "rendering",
-            "compute_device"
-        ]),
-        "preparation" => serde_json::json!([
-            "reference_derivation",
-            "cross_document_applicability",
-            "rendering",
-            "compute_device"
-        ]),
-        "run" => serde_json::json!([
-            "image_decoding",
-            "rendering",
-            "compute_device",
-            "measurement"
-        ]),
         "comparison" => serde_json::json!([
             "image_decoding",
             "rendering",
@@ -210,22 +231,21 @@ fn decide(kind: &str, file: &std::path::Path) -> spektrafilm_benchmark::Result<s
             "cross_document_applicability"
         ]),
     };
-    let mut result = serde_json::json!({
+    let result = serde_json::json!({
         "schema_version": 1,
         "command": "document",
         "execution_status": "completed",
         "kind": kind,
-        "digest": spektrafilm_benchmark::common::digest(&value)?,
+        "digest": spektrafilm_lab::common::digest(&value)?,
         "unchecked": unchecked
     });
-    if kind == "suite" {
-        result["protocol_digest"] = serde_json::json!(documents::protocol_digest(&value)?);
-    }
     Ok(result)
 }
 
 /// The endpoints this binary owns, in help order.
-const OWNED: &[&str] = &["analyze", "compare", "regions", "document"];
+const OWNED: &[&str] = &[
+    "analyze", "compare", "sample", "inspect", "report", "regions", "document",
+];
 
 /// Endpoints another binary owns, and the command that owns them.
 ///
@@ -233,19 +253,9 @@ const OWNED: &[&str] = &["analyze", "compare", "regions", "document"];
 /// The owner is the first word of the replacement, so a row cannot claim one
 /// binary and point at another.
 const ELSEWHERE: &[(&str, &str)] = &[
-    ("run", "spektrafilm-f64 run ..."),
     ("measure", "spektrafilm-f64 measure ..."),
-    ("experiment", "spektrafilm-f64 experiment ..."),
-    ("fixtures", "spektrafilm-f64 fixtures ..."),
-    ("target", "spektrafilm-f64 target ..."),
     ("spectral", "spektrafilm-f64 spectral ..."),
     ("fit", "spektrafilm-f64 fit ..."),
-    ("inspect", "spektrafilm-bench inspect ..."),
-    ("report", "spektrafilm-bench report ..."),
-    ("sample", "spektrafilm-bench sample ..."),
-    ("compare runs", "spektrafilm-bench compare runs ..."),
-    ("compare readings", "spektrafilm-bench compare readings ..."),
-    ("compare pairs", "spektrafilm-bench compare pairs ..."),
     ("schema", "spektrafilm-lab document --kind KIND ..."),
     (
         "validate",
@@ -306,10 +316,20 @@ fn usage(error: clap::Error) -> i32 {
     };
     let message = error.render().to_string();
     let message = message.trim_end().to_owned();
-    let endpoint = std::env::args()
-        .skip(1)
-        .find(|argument| !argument.starts_with('-'))
-        .unwrap_or_else(|| "usage".to_owned());
+    // The endpoint a reader has to fix is what they typed: `compare readings`
+    // must not be reported as `compare`, which is a different command.
+    let endpoint = {
+        let mut words = std::env::args()
+            .skip(1)
+            .filter(|word| !word.starts_with('-'));
+        let first = words.next().unwrap_or_else(|| "usage".to_owned());
+        match words.next() {
+            Some(second) if first == "compare" && second == "readings" => {
+                format!("{first} {second}")
+            }
+            _ => first,
+        }
+    };
     refuse(code, &message, &endpoint)
 }
 
@@ -317,24 +337,6 @@ const BINARY: &str = "spektrafilm-lab";
 
 fn emit(value: &serde_json::Value) {
     println!("{}", serde_json::to_string_pretty(value).unwrap());
-}
-
-/// `compare` takes an image pair, not a subcommand. A word that used to be a
-/// subcommand here belongs to another binary, and clap would report it as an
-/// unexpected argument instead. The guard runs before parsing so the refusal
-/// comes from the one table that says where that endpoint lives.
-fn reject_elsewhere_subcommand() -> Option<i32> {
-    let mut argv = std::env::args().skip(1);
-    if argv.next().as_deref() != Some("compare") {
-        return None;
-    }
-    let endpoint = format!("compare {}", argv.next()?);
-    let (owner, replacement) = elsewhere(&endpoint)?;
-    Some(refuse(
-        "argument_syntax",
-        &format!("`{endpoint}` belongs to {owner}; run `{replacement}`"),
-        &endpoint,
-    ))
 }
 
 /// The binary and the endpoint that produced a result. A reader can tell a lab
@@ -345,10 +347,41 @@ fn stamp(mut value: serde_json::Value, endpoint: &str) -> serde_json::Value {
     value
 }
 
-fn run() -> i32 {
-    if let Some(status) = reject_elsewhere_subcommand() {
-        return status;
+/// Clap cannot mark a flag "required unless a subcommand was given", so the
+/// image comparison states its four required flags here, in the refusal shape
+/// every other rejected invocation uses.
+fn image_args(args: CompareArgs) -> std::result::Result<cli_images::Args, spektrafilm_lab::Error> {
+    let missing: Vec<&str> = [
+        ("--baseline", args.baseline.is_none()),
+        ("--candidate", args.candidate.is_none()),
+        ("--declaration", args.declaration.is_none()),
+        ("--out", args.out.is_none()),
+    ]
+    .into_iter()
+    .filter_map(|(flag, absent)| absent.then_some(flag))
+    .collect();
+    if !missing.is_empty() {
+        return Err(spektrafilm_lab::Error::new(
+            "argument_syntax",
+            format!(
+                "`compare` needs {}; compare retained records with `compare readings`",
+                missing.join(", ")
+            ),
+        ));
     }
+    Ok(cli_images::Args {
+        baseline: args.baseline.expect("checked above"),
+        candidate: args.candidate.expect("checked above"),
+        declaration: args.declaration.expect("checked above"),
+        roi: args.roi,
+        regions: args.regions,
+        analysis: args.analysis,
+        map_scale: args.map_scale,
+        out: args.out.expect("checked above"),
+    })
+}
+
+fn run() -> i32 {
     // A usage error is a refusal like any other, so it reaches the caller in
     // the same shape. Clap's own exit would print prose and no record, which
     // makes a pipeline special-case it.
@@ -394,12 +427,21 @@ fn run() -> i32 {
     }
     let command = match &cli.command {
         Commands::Analyze { .. } => "analyze",
-        Commands::Compare { .. } => "compare",
+        Commands::Compare(args) => match &args.command {
+            None => "compare",
+            Some(surface::CompareCommand::Readings(_)) => "compare readings",
+        },
         Commands::Regions { .. } => "regions",
         Commands::Document { .. } => "document",
+        Commands::Sample { .. } => "sample",
+        Commands::Inspect { .. } => "inspect",
+        Commands::Report { command } => match command {
+            surface::ReportCommand::Comparison { .. } => "report comparison",
+            surface::ReportCommand::Photos { .. } => "report photos",
+        },
         Commands::External(_) => "unknown",
     };
-    let result: spektrafilm_benchmark::Result<(serde_json::Value, i32)> = match cli.command {
+    let result: spektrafilm_lab::Result<(serde_json::Value, i32)> = match cli.command {
         // The printed payload is the schema itself, so it is not stamped: a
         // caller may diff it against the packaged asset.
         Commands::Document { kind, check: None } => match documents::schema_for(&kind) {
@@ -439,8 +481,14 @@ fn run() -> i32 {
             )
             .map(|value| (value, 0))
         }
-        Commands::Analyze(args) => images::analyze_run(&args),
-        Commands::Compare(args) => images::run(&args),
+        Commands::Analyze(args) => cli_images::analyze_run(&args),
+        Commands::Compare(args) => match args.command {
+            Some(command) => surface::compare_runs(&command),
+            None => image_args(args).and_then(|args| cli_images::run(&args)),
+        },
+        Commands::Sample { args } => surface::sample(&args),
+        Commands::Inspect(args) => surface::inspect(&args),
+        Commands::Report { command } => surface::report(&command),
         Commands::External(_) => unreachable!("handled before dispatch"),
     };
     match result {

@@ -45,8 +45,8 @@ cargo build --release --features precision-f64 -p spektrafilm-lab
 # Optional RAW decoding helper using the shared native decoder
 cargo build --release -p spektrafilm-cli --bin decode_raw_gui
 
-# benchmark CLI — offline visual reports from authored manifests
-cargo build --release -p spektrafilm-benchmark
+# measurement instrument — records and the offline review page
+cargo build --release -p spektrafilm-lab --features precision-f64
 ```
 
 This produces:
@@ -56,7 +56,6 @@ This produces:
 - `target/release/spektrafilm-f64` — f64 reference exporter; explicit GPU selection retains the device execution contract. Its experimental research commands execute a declaration and publish retained evidence.
 - `target/release/spektrafilm-lab` — the measurement instrument: analysis, comparison, and reporting (f64 reference precision; links no renderer; shipped in packages).
 - `target/release/decode_raw_gui` — standalone RAW decoding helper.
-- `target/release/spektrafilm-bench` — benchmark-owned offline visual reports, for example `report photos`.
 
 The `just` command surface also covers packaging and per-user installation:
 
@@ -75,13 +74,13 @@ just install
 
 ## Packaging and installation
 
-Packages must distribute the native shared libraries and their transitive dependencies with the CLI, GUI, `decode_raw_gui`, the instrument binary `spektrafilm-lab`, and the benchmark binary `spektrafilm-bench`. They must also include the Lensfun XML database. Preserve Lensfun's default database lookup location or deploy it in the platform's standard data directory.
+Packages must distribute the native shared libraries and their transitive dependencies with the CLI, GUI, `decode_raw_gui`, and the instrument binary `spektrafilm-lab`. They must also include the Lensfun XML database. Preserve Lensfun's default database lookup location or deploy it in the platform's standard data directory.
 
 LibRaw is dual LGPL 2.1/CDDL 1.0. Lensfun's library is LGPL 3.0, and its database is CC BY-SA 3.0. Exiv2 is GPL 2.0 or later. GLib is LGPL 2.1 or later. Packages must include applicable license texts. The application remains GPL 3.0.
 
 The GUI embeds its English and Simplified Chinese translation catalogs and Noto Sans SC fallback font. Runtime language switching needs no downloads or installed CJK fonts. Platform packages must include the font's OFL license and source notice alongside existing third-party notices; see [font attribution](attribution.md#gui-chinese-font).
 
-On Linux x64, install `patchelf libxkbcommon-x11-0` and run `scripts/package_linux_app.sh` after `just build`. This builds the CLI, f64 exporter, GUI, RAW helper, the instrument, and the benchmark. `BUILD_TARGET_DIR` selects Cargo's output directory. `DIST_DIR` selects the generated package directory. The script copies recursive ELF dependencies, LittleCMS, the GUI's dynamically loaded xkbcommon providers, profiles/ICC files, Lensfun XML, and native license notices. It verifies loader resolution and relative `$ORIGIN` library paths before creating a `.tar.gz`.
+On Linux x64, install `patchelf libxkbcommon-x11-0` and run `scripts/package_linux_app.sh` after `just build`. This builds the CLI, f64 exporter, GUI, RAW helper, and the instrument. `BUILD_TARGET_DIR` selects Cargo's output directory. `DIST_DIR` selects the generated package directory. The script copies recursive ELF dependencies, LittleCMS, the GUI's dynamically loaded xkbcommon providers, profiles/ICC files, Lensfun XML, and native license notices. It verifies loader resolution and relative `$ORIGIN` library paths before creating a `.tar.gz`.
 
 Extract the entire archive and launch the wrappers in `bin/`. They locate bundled data and libraries relative to their own location. The host supplies glibc, the display server, and graphics drivers. Windows and macOS use `scripts/package_windows_app.ps1` and `scripts/package_macos_app.sh`.
 
@@ -115,7 +114,6 @@ See [scripts/parity/README.md](../scripts/parity/README.md) for release package 
 - [CLI usage](cli.md)
 - [GUI usage](gui.md)
 - [RAW decoding](raw.md)
-- [Appearance benchmark](benchmark.md)
 - [Parity and acceptance evidence](parity.md)
 - [Test architecture](../eng/testing.md)
 - [Native package and GUI acceptance tools](../scripts/parity/README.md)

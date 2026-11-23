@@ -94,7 +94,7 @@ impl Pipeline {
             if request.rotation_quarter_turns != 0 {
                 host = host.rotated_quarter_turns(request.rotation_quarter_turns as i32);
             }
-            let mut out = self.process_full(host, backend, None, None)?;
+            let mut out = self.process_full(host, backend, None)?;
             if let Some(max_size) = request.preview_max_size {
                 out = crate::params_builder::resize_for_preview(&out, max_size);
             }
@@ -178,7 +178,7 @@ impl Pipeline {
             if request.rotation_quarter_turns != 0 {
                 host = host.rotated_quarter_turns(request.rotation_quarter_turns as i32);
             }
-            let mut out = self.process_full(host, backend, None, None)?;
+            let mut out = self.process_full(host, backend, None)?;
             if let Some(max_size) = request.preview_max_size {
                 out = crate::params_builder::resize_for_preview(&out, max_size);
             }

@@ -27,7 +27,8 @@ precision-f64 = [
     "spektrafilm-core/precision-f64",
     "spektrafilm-gpu/precision-f64",
     "spektrafilm-raw/precision-f64",
-    "dep:spektrafilm-benchmark",
+    "dep:spektrafilm-lab",
+    "spektrafilm-lab/precision-f64",
 ]
 
 [dependencies]
@@ -46,10 +47,10 @@ anyhow.workspace = true
 tracing-subscriber.workspace = true
 tiff = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-# The instrument binary carries the appearance-evaluation command surface. The
-# evaluation library stays renderer-independent and math-only; only the lab
-# binary links it, so the product binaries keep their dependency set.
-spektrafilm-benchmark = { path = "../spektrafilm-benchmark", optional = true }
+# The instrument crate carries the evaluation and reporting command surface the
+# f64 build exposes. The library itself is renderer-independent and math-only, so
+# linking it adds no renderer dependency to this binary.
+spektrafilm-lab = { path = "../spektrafilm-lab", optional = true }
 
 # The workspace `image` dependency is PNG-only. These suites decode the
 # TIFF/EXR artifacts the CLI writes, so the test target restores those

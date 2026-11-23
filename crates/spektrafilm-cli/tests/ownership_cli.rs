@@ -44,17 +44,15 @@ fn endpoints_of_the_lab_are_refused() {
 /// The reading family and the evaluation surface moved past the lab, so naming
 /// the lab here would send a caller to a binary that also refuses.
 #[test]
-fn endpoints_of_the_benchmark_are_refused_naming_the_benchmark() {
+fn endpoints_of_the_lab_are_refused_naming_the_lab() {
     for (args, endpoint) in [
         (vec!["sample"], "sample"),
         (vec!["report"], "report"),
-        (vec!["compare", "runs", "--baseline", "a"], "compare runs"),
         (
             vec!["compare", "readings", "--baseline", "a"],
             "compare readings",
         ),
-        (vec!["compare", "pairs", "--run", "a"], "compare pairs"),
     ] {
-        rejected(&args, "spektrafilm-bench", endpoint);
+        rejected(&args, "spektrafilm-lab", endpoint);
     }
 }

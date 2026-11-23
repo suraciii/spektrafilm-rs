@@ -60,20 +60,35 @@ def _write_provenance(evidence, package_root, binaries, observations):
     (evidence / 'package_report.json').write_text(
         json.dumps(report, indent=2) + '\n')
 
-def _benchmark_smoke(exporter, data, evidence, environment):
+def _write_png(path):
+    """Write a deterministic RGB gradient without an image library."""
+    import struct
+    import zlib
+    width = height = 32
+    rows = b''.join(
+        b'\x00' + b''.join(bytes([(x * 8) % 256, (y * 8) % 256, 128])
+                           for x in range(width))
+        for y in range(height))
+    def chunk(tag, payload):
+        body = tag + payload
+        return (struct.pack('>I', len(payload)) + body
+                + struct.pack('>I', zlib.crc32(body) & 0xFFFFFFFF))
+    path.write_bytes(
+        b'\x89PNG\r\n\x1a\n'
+        + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+        + chunk(b'IDAT', zlib.compress(rows))
+        + chunk(b'IEND', b''))
+
+
+def _instrument_smoke(exporter, evidence, environment):
     suffix = exporter.suffix
-    binaries = {
-        'instrument': exporter.with_name('spektrafilm-lab' + suffix),
-        'bench': exporter.with_name('spektrafilm-bench' + suffix),
-    }
-    instrument = binaries['instrument']
-    bench = binaries['bench']
+    instrument = exporter.with_name('spektrafilm-lab' + suffix)
     assert instrument.is_file(), f'Installed instrument missing: {instrument}'
-    assert bench.is_file(), f'Installed benchmark missing: {bench}'
-    # The research command surface ships in the f64 build the exporter is;
-    # evaluation commands live in the benchmark binary beside it.
+    # The research command surface ships in two binaries: the f64 build the
+    # exporter is, and the lab beside it, which also runs the reading and
+    # reporting endpoints.
     assert exporter.is_file(), f'Installed f64 build missing: {exporter}'
-    root = evidence / 'benchmark'
+    root = evidence / 'instrument'
     root.mkdir()
     commands = []
 
@@ -87,27 +102,16 @@ def _benchmark_smoke(exporter, data, evidence, environment):
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
 
-    fixtures = root / 'fixtures'
-    invoke('fixtures', '--renderer', exporter, '--data-dir', data,
-           '--out', fixtures, binary=exporter)
-    target = root / 'local-target.json'
-    invoke('target', '--renderer', exporter, '--data-dir', data,
-           '--backend', 'cpu', '--out', target, binary=exporter)
-    invoke('document', '--kind', 'target', '--check', target)
-    preflight = root / 'preflight'
-    invoke('run', 'suite', '--suite', fixtures / 'complete.json', '--target',
-           target, '--dry-run', '--out', preflight, binary=exporter)
-    preflight_manifest = json.loads((preflight / 'preflight.json').read_text())
-    assert preflight_manifest['execution_status'] == 'validated'
-    assert not (preflight / 'run.json').exists()
-    run = root / 'run'
-    invoke('run', 'suite', '--suite', fixtures / 'quick.json', '--target',
-           target, '--case', 'color_chart', '--out', run, binary=exporter)
-    invoke('document', '--kind', 'run', '--check', run / 'run.json')
+    baseline = root / 'baseline.png'
+    candidate = root / 'candidate.png'
+    _write_png(baseline)
+    _write_png(candidate)
     comparison = root / 'comparison'
-    invoke('compare', 'runs', '--baseline', run, '--candidate', run,
-           '--out', comparison, binary=bench)
+    published = invoke('compare', '--baseline', baseline, '--candidate',
+                       candidate, '--declaration', 'sRGB:encoded',
+                       '--out', comparison)
     manifest = json.loads((comparison / 'comparison.json').read_text())
+    assert published['comparison_id'] == manifest['id']
     rows = manifest['cases'][0]['measurements']
     for metric in ('numeric.rmse', 'delta_e00.median', 'flip.mean'):
         row = next(row for row in rows if row['metric'] == metric
@@ -116,19 +120,18 @@ def _benchmark_smoke(exporter, data, evidence, environment):
     invoke('document', '--kind', 'comparison', '--check',
            comparison / 'comparison.json')
     inspected = invoke('inspect', '--comparison', comparison,
-                       '--case', 'color_chart', '--region', 'full_image',
-                       '--metric', 'numeric.rmse', binary=bench)
+                       '--case', 'baseline', '--region', 'full_image',
+                       '--metric', 'numeric.rmse')
     assert inspected['comparison_id'] == manifest['id']
     assert all(row['value'] == 0 and row['metric'] == 'numeric.rmse'
                for row in inspected['measurements'])
     report = root / 'report'
-    invoke('report', 'comparison', '--comparison', comparison, '--out', report,
-           binary=bench)
+    invoke('report', 'comparison', '--comparison', comparison, '--out', report)
     assert (report / 'index.html').is_file()
     assert json.loads((report / 'report.json').read_text())['comparison_id'] == manifest['id']
     for license_name in ('nvlabs-flip-bsd-3-clause.txt', 'littlecms-mit.txt'):
         assert any(path.is_file() for path in exporter.parents[1].rglob(license_name)), license_name
-    return binaries, {'installed_instrument': str(instrument),
+    return instrument, {'installed_instrument': str(instrument),
                       'comparison_id': manifest['id'], 'identity_metrics':
                       ['numeric.rmse', 'delta_e00.median', 'flip.mean'],
                       'report': str(report / 'index.html')}
@@ -345,8 +348,8 @@ def main():
     observations.append({'installed_lut_exporter': str(exporter),
                          'bundle': str(bundle), 'artifacts': artifact_evidence,
                          'ocio_processors': processor_count, 'qa_report_passed': qa['passed']})
-    instrument_binaries, instrument_observation = _benchmark_smoke(
-        exporter, data, evidence, environment)
+    instrument, instrument_observation = _instrument_smoke(
+        exporter, evidence, environment)
     observations.append(instrument_observation)
     if args.gui:
         # accept_gui lazily loads the canonical stage driver; the shared native
@@ -357,7 +360,7 @@ def main():
     _write_provenance(
         evidence, package_root,
         {'cli': cli, 'exporter': exporter, 'raw_helper': helper,
-         **instrument_binaries,
+         'instrument': instrument,
          **({'gui': args.gui.resolve()} if args.gui else {})},
         observations)
     gui_suffix = ' and native GUI acceptance' if args.gui else ''

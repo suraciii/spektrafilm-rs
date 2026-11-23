@@ -527,12 +527,30 @@ fn every_measurement_names_its_family() {
 fn the_document_vocabulary_has_one_owner() {
     let help = lab().args(["document", "--help"]).output().unwrap();
     let help = String::from_utf8_lossy(&help.stdout).to_string();
-    for kind in ["regions", "analysis", "comparison", "suite", "target"] {
+    for kind in ["regions", "analysis", "comparison", "report"] {
         assert!(help.contains(kind), "the kind list omits {kind}");
     }
     // A kind that is printable but not decidable is still listed, because the
     // list is the vocabulary, not the subset this binary can rule on.
-    assert!(help.contains("preflight"), "{help}");
+    let kinds: Vec<&str> = help
+        .split("Document kinds:")
+        .nth(1)
+        .expect("help lists the document kinds")
+        .split_whitespace()
+        .collect();
+    for retired in [
+        "suite",
+        "target",
+        "policy",
+        "run",
+        "experiment",
+        "preflight",
+    ] {
+        assert!(
+            !kinds.contains(&retired),
+            "the kind list still names {retired}"
+        );
+    }
 
     let out = lab()
         .args(["document", "--kind", "not_a_kind", "--check", "x.json"])
@@ -549,7 +567,7 @@ fn the_document_vocabulary_has_one_owner() {
     // The invocation is well formed and the kind exists, so the failure is an
     // execution failure (1), not a refused invocation (2).
     let out = lab()
-        .args(["document", "--kind", "preflight", "--check"])
+        .args(["document", "--kind", "report", "--check"])
         .arg(file.path())
         .output()
         .unwrap();
@@ -617,12 +635,12 @@ fn an_unavailable_measurement_reports_no_sample_count() {
 /// endpoint lives from the same document it parses everywhere else.
 #[test]
 fn a_refused_endpoint_reaches_the_caller_as_a_record() {
-    let output = lab().args(["report", "--out", "x"]).output().unwrap();
+    let output = lab().args(["measure", "run"]).output().unwrap();
     assert_eq!(output.status.code(), Some(2));
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["binary"], "spektrafilm-lab");
-    assert_eq!(value["endpoint"], "report");
+    assert_eq!(value["endpoint"], "measure");
     assert_eq!(value["execution_status"], "failed");
     let message = value["errors"][0]["message"].as_str().unwrap();
-    assert!(message.contains("spektrafilm-bench"), "{message}");
+    assert!(message.contains("spektrafilm-f64"), "{message}");
 }

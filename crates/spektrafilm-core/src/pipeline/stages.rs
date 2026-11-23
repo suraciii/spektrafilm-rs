@@ -166,7 +166,6 @@ impl Pipeline {
         backend: &dyn ComputeBackend,
         physical_context: Option<(f64, f64)>,
         stage_timings: Option<&mut BTreeMap<String, f64>>,
-        mut capture: Option<&mut crate::stage_evidence::StageCapture>,
         mut material_geometry: Option<&mut crate::stage_artifact::StageGeometry>,
     ) -> Result<ImageBuf, String> {
         self.check_cancelled()?;
@@ -205,17 +204,9 @@ impl Pipeline {
         }
         let forms_film = matches!(inject, Tap::RgbIn | Tap::RgbPre | Tap::LogEFilm);
         let _ = forms_film;
-        if let Some(capture) = capture.as_deref_mut()
-            && self.params.io.scan_film
-        {
-            // `io.scan_film` short-circuits the print stages.
-            use crate::stage_evidence::StageId;
-            capture.record_skip(StageId::LogEPrint, "no_print_stage_on_route");
-            capture.record_skip(StageId::CmyPrint, "no_print_stage_on_route");
-        }
         let (mut cur, mut pixel_size_um, ae_ev) = if inject == Tap::RgbIn && cp > ip {
             crate::stages::grain_dye::validate_supported(&self.film, &self.params)?;
-            let (image, ae_ev) = self.expose_full_input(image, backend, capture.as_deref_mut())?;
+            let (image, ae_ev) = self.expose_full_input(image, backend)?;
             let (working, pitch) = self.rescale_working(&image, backend)?;
             let working = match working {
                 std::borrow::Cow::Owned(working) => working,
@@ -241,8 +232,6 @@ impl Pipeline {
             i += 1;
         }
         let mut output_crop = None;
-        use crate::stage_evidence::CoordinateSpace;
-        let mut stage_space = CoordinateSpace::Working;
         while i < cp {
             self.check_cancelled()?;
             cur = self.fire_node(
@@ -253,13 +242,6 @@ impl Pipeline {
                 ae_ev,
                 &mut stage_timings,
             )?;
-            if order[i] == Tap::RgbPre
-                && let Some(capture) = capture.as_deref_mut()
-            {
-                // The filming exposure multiply runs inside the node just
-                // fired; the stage evidence reports what was applied.
-                capture.record_compensation(self.params.camera.exposure_compensation_ev as f64);
-            }
             if order[i] == Tap::LogEFilm && crate::stages::grain_dye::active(&self.params) {
                 let t = Instant::now();
                 let spatial_context = ((collect == Tap::RgbOut || material_geometry.is_some())
@@ -277,11 +259,6 @@ impl Pipeline {
                 output_crop = plan.deferred_crop;
                 let geometry = plan.geometry;
                 let grid = plan.grid;
-                let readout_space = if plan.deferred_crop.is_some() {
-                    CoordinateSpace::FilmFrame
-                } else {
-                    CoordinateSpace::Output
-                };
                 // The existing scalar optical controls use the actual pitch
                 // on the full source's long axis. Rounding may make the other
                 // axis differ; the field itself retains both exact pitches.
@@ -295,7 +272,6 @@ impl Pipeline {
                     grid,
                     backend,
                 )?;
-                stage_space = readout_space;
                 pixel_size_um = requested_pitch_um;
                 print_stage_timing(stage_timings_enabled(), "grain_dye_readout", t);
                 record_stage_timing(&mut stage_timings, "grain_dye_readout", t);
@@ -318,11 +294,6 @@ impl Pipeline {
                 output_crop = plan.deferred_crop;
                 let geometry = plan.geometry;
                 let grid = plan.grid;
-                let readout_space = if plan.deferred_crop.is_some() {
-                    CoordinateSpace::FilmFrame
-                } else {
-                    CoordinateSpace::Output
-                };
                 let long_axis = usize::from(cur.height > cur.width);
                 cur = self.fotufilm_prepared.readout(
                     &cur,
@@ -333,7 +304,6 @@ impl Pipeline {
                     backend,
                     &|| self.check_cancelled(),
                 )?;
-                stage_space = readout_space;
                 pixel_size_um = geometry.output_pitch_um[long_axis];
                 record_stage_timing(&mut stage_timings, "grain_fotufilm_readout", t);
                 dump_if_env("SPEKTRAFILM_DUMP_FILM_DENSITY", &cur);
@@ -341,13 +311,6 @@ impl Pipeline {
             // The value at the next tap has settled (post-grain, post-crop
             // decision). `rgb_out` is recorded by the caller as the delivered
             // pre-saving output, including post-processing.
-            if let Some(next) = order.get(i + 1).copied()
-                && next != Tap::RgbOut
-                && let Some(id) = crate::stage_evidence::StageId::of_tap(next)
-                && let Some(capture) = capture.as_deref_mut()
-            {
-                capture.record_boundary(id, &cur, stage_space);
-            }
             i += 1;
         }
         if let Some(geometry) = material_geometry.as_mut() {
@@ -421,8 +384,6 @@ mod tests {
             .unwrap();
             for inject in [Tap::RgbIn, Tap::RgbPre] {
                 for (collect, expected) in [(Tap::LogEFilm, &exposure), (Tap::CmyFilm, &density)] {
-                    let bundle = tempfile::tempdir().unwrap();
-                    let mut capture = crate::stage_evidence::StageCapture::new(bundle.path());
                     let actual = pipeline
                         .process_with_taps_timed(
                             image.clone(),
@@ -430,31 +391,11 @@ mod tests {
                             Some(inject),
                             Some(collect),
                             None,
-                            Some(&mut capture),
                         )
                         .unwrap();
                     assert_eq!(
                         actual.data, expected.data,
                         "{route}: {inject:?} -> {collect:?}"
-                    );
-                    capture.publish().unwrap();
-                    let bytes =
-                        std::fs::read(bundle.path().join(format!("{}.f64", collect.name())))
-                            .unwrap();
-                    let persisted: Vec<f64> = bytes
-                        .as_chunks::<8>()
-                        .0
-                        .iter()
-                        .map(|value| f64::from_le_bytes(*value))
-                        .collect();
-                    assert_eq!(
-                        persisted,
-                        expected
-                            .data
-                            .iter()
-                            .copied()
-                            .map(to_f64)
-                            .collect::<Vec<_>>()
                     );
                 }
             }

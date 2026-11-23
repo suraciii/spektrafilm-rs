@@ -1,9 +1,6 @@
 //! Retained-document fixtures for the lab suites.
-//!
-//! The canonical recorded run is committed by the crate that owns the run
-//! format; a test copies it and mutates the copy.
 use serde_json::{Value, json};
-use spektrafilm_benchmark::common::{self, Evidence};
+use spektrafilm_lab::common::{self, Evidence};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -30,27 +27,4 @@ pub fn record(evidence: &mut Evidence, name: &str, role: &str, value: Value) -> 
     evidence
         .add(&path, role, "application/json", json!({}))
         .unwrap()
-}
-
-/// The canonical recorded run, hosted by the crate that owns the run format.
-pub fn retained_run() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../spektrafilm-benchmark/tests/fixtures/retained-run")
-}
-
-/// Copy the recorded run so a test can mutate it.
-pub fn copy_fixture(destination: &Path) {
-    fn copy(from: &Path, to: &Path) {
-        fs::create_dir_all(to).unwrap();
-        for entry in fs::read_dir(from).unwrap() {
-            let entry = entry.unwrap();
-            let target = to.join(entry.file_name());
-            if entry.file_type().unwrap().is_dir() {
-                copy(&entry.path(), &target);
-            } else {
-                fs::copy(entry.path(), target).unwrap();
-            }
-        }
-    }
-    copy(&retained_run(), destination);
 }

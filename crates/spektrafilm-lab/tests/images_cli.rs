@@ -85,10 +85,10 @@ fn a_single_pair_publishes_a_comparison_record() {
     let comparison = read_json(&out.join("comparison.json"));
     assert_eq!(comparison["baseline"]["kind"], "images");
     assert!(comparison.get("mode").is_none());
-    // One delivered image set is one realisation: the record states no seed
-    // population and no judgement.
-    assert!(comparison.get("evaluation_status").is_none());
-    assert!(comparison.get("findings").is_none());
+    // One delivered image set is one realisation: no seed population and no
+    // judgement, stated as the one value the record can have.
+    assert_eq!(comparison["evaluation_status"], "not_evaluated");
+    assert_eq!(comparison["findings"], serde_json::json!([]));
     assert!(comparison["cases"][0].get("seed").is_none());
     assert!(
         comparison["cases"][0]["measurements"]
@@ -236,4 +236,31 @@ fn an_authored_regions_document_must_declare_render_geometry() {
         serde_json::from_slice(&std::fs::read(temp.path().join("accepted/regions.json")).unwrap())
             .unwrap();
     assert_eq!(retained["regions"][0]["id"], "patch");
+}
+
+/// `compare` carries two inputs: two delivered images, or a retained record.
+/// Without a subcommand it is the image comparison, and the four flags that
+/// form it are stated in the refusal rather than left to clap.
+#[test]
+fn compare_without_flags_names_the_flags_it_needs() {
+    let output = lab().arg("compare").output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["endpoint"], "compare");
+    assert_eq!(value["errors"][0]["code"], "argument_syntax");
+    let message = value["errors"][0]["message"].as_str().unwrap();
+    for flag in ["--baseline", "--candidate", "--declaration", "--out"] {
+        assert!(message.contains(flag), "{message} must name {flag}");
+    }
+}
+
+/// A rejected record comparison names the subcommand the caller typed, not the
+/// parent, because the two take different flags.
+#[test]
+fn a_refused_compare_subcommand_is_named_in_full() {
+    let output = lab().args(["compare", "readings"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["endpoint"], "compare readings");
+    assert_eq!(value["errors"][0]["code"], "argument_syntax");
 }

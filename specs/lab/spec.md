@@ -16,12 +16,12 @@ It answers three questions:
 - What retained evidence supports those numbers?
 
 It does not decide what an image looks like. Rendering belongs to the
-renderer. Judgement belongs to a policy the caller declares.
+renderer. Judgement belongs to the caller.
 
-It does not present an image either. The record is the product; a page, a
-plot, or a document is a reading of the record and is owned by whoever reads
-it. The record MUST nevertheless be complete enough that such a reading needs
-no source the lab did not retain.
+The lab binary renders no page. The record is the product; a page, a plot, or
+a document is a reading of the record, and [the lab report](report/spec.md)
+owns the reading that ships with this product. The record MUST nevertheless be
+complete enough that such a reading needs no source the lab did not retain.
 
 The primary use is an A/B evaluation of two renderer revisions: a script or an
 agent renders the same inputs with two builds, then hands both image sets to
@@ -31,7 +31,7 @@ the lab and receives one structured comparison.
 
 - This document owns the lab product boundary: its scope, its laws, its
   concepts, its command surface, and the record each command publishes.
-- The [measurement protocol](../benchmark/metrics/spec.md) owns metric
+- The [measurement protocol](metrics/spec.md) owns metric
   meaning, domains, estimators, regions, and availability reasons. This
   document names the families it selects; it does not define a second
   implementation of one.
@@ -66,13 +66,12 @@ the lab and receives one structured comparison.
 
 | The lab owns | The lab consumes | The lab MUST NOT do |
 |---|---|---|
-| Color-science measurement and its structured record | Delivered raster images with an explicit color and transfer declaration | Render, re-render, or present an image |
-| Declared regions and their geometry authority | Retained stage-evidence bundles | Decode by extension, infer a color space, or guess a transfer state |
-| Joins, deltas, and distribution statistics | Two retained records | Rank a candidate, apply an unrequested policy, or invent a score |
+| Color-science measurement, its structured record, and the report that reads it | Delivered raster images with an explicit color and transfer declaration | Render or re-render the image it measures |
+| Declared regions and their geometry authority | Delivered rasters | Decode by extension, infer a color space, or guess a transfer state |
+| Joins, deltas, and distribution statistics | Two retained records | Rank a candidate or invent a score |
 | | | Manage a document repository, orchestrate a workflow, or describe a graph of invocations |
 
-GUI automation, evaluation policy, benchmark review, and profile authoring are
-other capabilities. A question that needs one of them is not a lab question.
+GUI automation and profile authoring are other capabilities. A question that needs one of them is not a lab question.
 
 ## Concepts
 
@@ -143,35 +142,27 @@ each quantity on `baseline`, on `candidate`, and as their `delta`; a row states
 which. A quantity that exists once — a difference between two sources, a
 statistic of one source — states no side.
 
-A policy rule names the quantity it bounds and states the side when the quantity
-has more than one. Omitting that side is refused with `side_required`, and
-naming a side the quantity does not have is refused with `invalid_policy_side`;
-the measurement definitions decide both, so validation and evaluation cannot
-disagree.
-
 ## Command surface
 
 | Endpoint | Owns | Does not do |
 |---|---|---|
-| `analyze` | quantify one delivered image set | compare, evaluate a policy, or present |
-| `compare` | quantify how two delivered image sets differ | compare two runs, join reading records, select a candidate, or present |
+| `analyze` | quantify one delivered image set | compare or render a page |
+| `compare` | quantify how two delivered image sets differ | join reading records, select a candidate, or render a page |
+| `compare readings` | join two retained reading records | read an image or invoke a renderer |
+| `sample` | read declared windows from a delivered image | render, resize, or infer geometry |
+| `inspect` | project a retained comparison's evidence | recalculate a metric or present a page |
+| `report comparison` | build the offline page for one retained comparison | render, measure, or accept a prepared-image manifest |
+| `report photos` | build the offline page for one authored photo manifest | measure or read a retained comparison |
 | `regions` | expand one finite grid declaration into explicit regions | read an image, render, or measure |
 | `document` | print the authoritative schema of one document kind, or decide one document | measure or guarantee an execution |
 
-`analyze` and `compare` are the product. The other three produce and check the
-declarations they consume, and a caller who authors those documents another way
-never needs them.
+`analyze` and `compare` are the product. The declaration and reading endpoints
+produce and check the documents those two consume, and a caller who authors
+those documents another way never needs them.
 
-The evaluation workflow and the reading family belong to `spektrafilm-bench`.
-That surface compares two completed runs, joins two reading records, selects
-evidence pairs from one run, projects a retained comparison, and reads declared
-sample points from an image or a retained stage capture.
-
-Those endpoints read a renderer's evidence or evaluate a policy. Neither is a
-color-science measurement of a delivered image set.
-
-A lab invocation of one of them MUST fail with `argument_syntax` naming
-`spektrafilm-bench`. The lab MUST NOT forward it.
+The reading endpoints also run here. They join two retained reading records,
+project a retained comparison, read declared sample points, and build the
+offline reports. Each states its own endpoint in what it publishes.
 
 ### compare
 
@@ -286,7 +277,7 @@ and MUST be rejected rather than re-rooted.
 
 ### Measurement families
 
-The [measurement protocol](../benchmark/metrics/spec.md) owns each family's
+The [measurement protocol](metrics/spec.md) owns each family's
 domain, estimator, and availability rules. This document names the families
 and what each measures; it does not define a second implementation of one. The
 family names are the ones the measurement library already emits, so a retained
@@ -393,9 +384,9 @@ it.
 
 ## Structured output
 
-This product publishes records and no page. The record is therefore complete
-on its own. A later reading of it needs no source the lab did not retain, and
-is never left guessing what a number meant.
+This product publishes records, and one report reads them. The record is
+therefore complete on its own: the report needs no source the lab did not
+retain, and no reader is left guessing what a number meant.
 
 One invocation publishes one directory:
 
@@ -473,8 +464,9 @@ reason, which is the noise floor of the pipeline that produced the files.
    `execution_status`, and `errors`, with exit status 2. `document --kind` is the one
    exception, because its payload is the packaged document and a caller can diff
    it against the asset.
-4. `spektrafilm-lab run suite ...` fails with `argument_syntax` and names
-   `spektrafilm-f64 run suite`.
+4. `spektrafilm-lab compare` without `--baseline`, `--candidate`, `--declaration`,
+   or `--out` fails with `argument_syntax`, names each missing flag, and creates
+   nothing.
 5. Two identical sources produce a record whose every available delta is zero
    and whose every unavailable row carries a reason.
 6. A record that would need a seed carries none, and no value is written as
@@ -501,24 +493,21 @@ reason, which is the noise floor of the pipeline that produced the files.
     comparison of the same source under the same profile publish the same
     identity for it, and the comparison states the side while the analysis
     states none.
-16. No metric identity contains a side. A rule that bounds a per-side quantity
-    without stating its side is refused with `side_required`, and a rule that
-    states a side the quantity does not have is refused with
-    `invalid_policy_side`.
-15. `--map-scale 4` changes no scalar measurement and records the scale.
-16. An EXR and the float TIFF written from the same render decode to the same
+16. No metric identity contains a side; the record states it as a field.
+17. `--map-scale 4` changes no scalar measurement and records the scale.
+18. An EXR and the float TIFF written from the same render decode to the same
     samples.
-17. A single-channel PNG decodes to three equal channels, and a four-channel
+19. A single-channel PNG decodes to three equal channels, and a four-channel
     PNG ignores its alpha instead of compositing.
-18. A `<path>.json` sidecar beside a measured image does not change the
+20. A `<path>.json` sidecar beside a measured image does not change the
     reading.
-19. A record carries the sha256 of every file it read and the digest of the
+21. A record carries the sha256 of every file it read and the digest of the
     protocol it materialized, so a third party recomputes the same identity.
-20. `spektrafilm-f64 compare runs ...` fails with `argument_syntax` and names
-    the owning binary.
-21. A source that does not exist, a container the lab does not measure, and a
+22. A record's endpoint names the subcommand that produced it, so `compare
+    readings` and `compare` never report the same endpoint.
+23. A source that does not exist, a container the lab does not measure, and a
     repeated `--roi` identity each fail without creating the destination.
-22. A refusal states its cause in `message` and its remedy in `remedy`; the
+24. A refusal states its cause in `message` and its remedy in `remedy`; the
     human line and the JSON record carry both.
 
 ## Independence
@@ -533,7 +522,7 @@ The lab's transitive dependency set MUST NOT contain `spektrafilm-core`,
 The lab requires reference precision unconditionally. It MUST NOT depend on a
 caller-enabled precision feature to select the precision it measures at.
 
-The evaluation library currently builds a native perceptual-difference
+The measurement library currently builds a native perceptual-difference
 evaluator through C++ and dynamic loading. That is a real build dependency of
 the measurement library, not a lab choice. Removing it for builds that never
 select `flip` is a follow-up of the library, and this document MUST NOT claim
@@ -558,8 +547,8 @@ interpretation it needs. Sharing the reader is therefore not a refinement of
 the boundary; it is the boundary being wrong.
 
 A caller who needs the renderer's reading of a file does not need a shared
-codec. The run record already retains it: `source_raw` is the floating master
-that the renderer's own input route produced, and `sample` reads it.
+codec. The renderer writes its floating master beside the delivered image, and
+`sample --source` reads whichever file the caller declares.
 
 ## Current implementation gap
 
@@ -571,7 +560,7 @@ Everything this document states is implemented, with four exceptions.
 - The lab reader decodes PNG, TIFF, and EXR by content. A JPEG or WebP fails
   as `lossy_container`; a layout whose normalization it cannot state fails as
   `unsupported_image_layout`.
-- The evaluation library builds its native perceptual-difference evaluator
+- The measurement library builds its native perceptual-difference evaluator
   with a C++ toolchain, so building the lab requires a C++ compiler. The lab
   selects `flip` in no default profile of its own; the dependency is the
   measurement library's.

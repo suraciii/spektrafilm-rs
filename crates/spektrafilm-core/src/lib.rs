@@ -37,7 +37,6 @@ pub use scanner_provenance::ScannerProvenance;
 pub mod spectral_eval;
 pub mod spectral_service;
 pub mod stage_artifact;
-pub mod stage_evidence;
 pub mod stage_execution;
 pub mod stages;
 mod suggest;

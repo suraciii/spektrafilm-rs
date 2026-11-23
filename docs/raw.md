@@ -180,7 +180,6 @@ X-Trans's ordered native processing can also change reference throughput.
 - [Building](building.md)
 - [GUI guide](gui.md)
 - [CLI guide](cli.md)
-- [Benchmark guide](benchmark.md)
 - [Parity evidence](parity.md)
 - [RAW fixture provenance](../scripts/parity/raw_fixtures.json)
 - [Parity scripts guide](../scripts/parity/README.md)

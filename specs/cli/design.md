@@ -87,13 +87,12 @@ Version 1 loads as Film without field rewriting.
 - The CLI MUST retain supplied input leaves separately from decoded baseline values. This distinction permits legacy files to declare source color without changing their calibration ownership.
 - Dedicated input flags MUST use the same typed field validation as `--set`; they MUST NOT create a second color-space registry or an input-conversion algorithm. The RAW adapter MUST remain the authority for RAW sample color.
 - Core owns typed completed material states and the artifact reader, writer, and validator. CLI selects an input state, finite route, and terminal writer; it MUST NOT reconstruct material state from diagnostic arrays or reimplement pipeline mathematics.
-- Dedicated instrument observations share the executed pipeline but remain research data under their [own contract](../instrument/native-observations.md). Removing a public side-capture option MUST NOT remove an observer still required by research commands.
 - Route selection MUST finish before runtime print-profile selection. Public process paths MUST derive topology from the selected route through the same rule, with or without parameter sources.
 - Parser conflicts MUST eliminate redundant route choices. Core MUST still reject an inconsistent invocation from a non-parser caller.
 - Internal GUI child contracts MUST retain their own admitted behavior rather than inherit new public argument requirements.
 - Seed MUST be an invocation value, not a sparse runtime leaf. The CLI MUST reuse the admitted seed domain from structured render.
 - Both adapters MUST apply it to the runtime before simulation. Seed MUST NOT select a digest policy or modify parameters other than the existing out-of-band stochastic seed.
-- Repeated benchmark attempts MUST restart from the same input and seed.
+- A repeated comparison MUST restart from the same input and seed.
 
 ## Resolution feedback
 - The shared resolver MUST retain winning explicit edits before constraints and compare them with the effective typed result. It MUST retain source identity only where the [report contract](spec.md#discovery-and-dry-run) requires it.
@@ -208,7 +207,7 @@ Changing explicit invalid data paths from fallback to failure and moving LUT not
 ## Stage state and diagnostic separation
 - The [stage input and output contract](stage-artifacts.md) owns single-entry resumable artifacts. A validated input state MUST restore completed operations and initialize only the remaining operations.
 - Profile content and model-required state MUST belong to the artifact; mutable external names MUST NOT reinterpret a saved material. A full parameter snapshot is provenance, not instructions to rerun already completed work.
-- `--debug` is a Boolean logging request owned by the [CLI diagnostic contract](spec.md#debug-diagnostics). It MUST reuse stderr logging and existing observation events without enabling numerical debug constraints, GPU timing, stage capture, or persistence.
+- `--debug` is a Boolean logging request owned by the [CLI diagnostic contract](spec.md#debug-diagnostics). It MUST reuse stderr logging and existing observation events without enabling numerical debug constraints, GPU timing, or persistence.
 - Shell redirection owns text-log files. Explicit `--diagnostics` owns structured report persistence independently.
 - The rejected design combined observations and resumable state in one multi-entry `.sfstage`, with `--save-stage` or `--export-stage` bindings. It made a production input's validity depend on a capture capability.
 - The selected design uses one normal terminal output, one guaranteed continuation entry, and a separate logging flag. It intentionally removes public simultaneous all-stage side capture rather than hiding it behind debug.

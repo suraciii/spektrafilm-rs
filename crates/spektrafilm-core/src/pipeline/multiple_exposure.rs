@@ -279,7 +279,6 @@ impl CpuAccumulator<'_> {
             Some((shot_pitch, ae_ev)),
             None,
             None,
-            None,
         )?;
         let shot_max = log_e
             .data
@@ -345,7 +344,6 @@ impl CpuAccumulator<'_> {
             self.collect,
             self.backend,
             Some((pitch, 0.0)),
-            None,
             None,
             None,
         )?;

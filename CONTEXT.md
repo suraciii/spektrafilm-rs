@@ -74,12 +74,6 @@ _Avoid_: Lab Scan, film record channels
 
 **Color center**: A representative color of a declared sample population, calculated with a named estimator. A median of Lab channels and Lab converted from mean linear RGB are different color centers. Neither establishes that a reference is suitable for fitting or acceptance.
 
-**Prepared image**: A raster image explicitly prepared outside the benchmark and declared in a review manifest. Its color interpretation is declared rather than inferred; preparation does not establish measured color values, exposure equivalence, or original framing.
-_Avoid_: Prepared chart image
-
-**Set**: A declared group of prepared images inside one review manifest, with either a shared patch grid or explicit per-image regions. A shared set does not establish the same spectral stimulus or pixel-level registration.
-_Avoid_: Chart group
-
 **Patch window**: The declared rectangular area of one grid patch used for visual inspection. It may cover the patch or a smaller central area, but it does not include an inferred correspondence to another set.
 
 **Render mode**: The exclusive processing path selected from Film, LUT, or Off. It selects which stages execute; inactive stages retain stored values.

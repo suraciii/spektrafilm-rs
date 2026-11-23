@@ -29,6 +29,10 @@ Claude Code assisted the port.
 The Rust program is GPL-3.0; see [LICENSE](../LICENSE).
 Andrea Volpato's spectral profiles and their LUT derivatives retain CC BY-SA 4.0; see [the canonical asset license](../data/license/SPEKTRAFILM_LICENSE.txt).
 
+## Report page components
+
+The offline review report embeds an unmodified Bootstrap 5.3.3 build (CSS and the JS bundle, no Popper split) from [getbootstrap.com](https://getbootstrap.com), MIT licensed; the [license text](../licenses/bootstrap-5.3.3-mit.txt) ships with it. It supplies the dropdown behavior, button states, and focus handling. The page's colors, spacing, and type are its own tokens layered over Bootstrap's variables, so the report does not inherit Bootstrap's default appearance.
+
 ## GUI Chinese font
 
 The GUI embeds unmodified Noto Sans SC Regular (Version 2.004) from [Noto CJK](https://github.com/notofonts/noto-cjk). The font is © 2014–2021 Adobe and distributed under the SIL Open Font License 1.1. The [source notice](../crates/spektrafilm-gui/assets/NotoSansSC-NOTICE.txt) records its upstream blob; the [license](../crates/spektrafilm-gui/assets/NotoSansSC-OFL.txt) ships with native packages. It supplies offline Chinese and mixed-script text without requiring system font installation.

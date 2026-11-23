@@ -5,7 +5,7 @@ default:
     @just --list
 
 # Build the portable default (wgpu/WGSL) release binaries plus the lab instrument binary.
-build: build-gui build-cli build-f64 build-lab build-bench decode-raw
+build: build-gui build-cli build-f64 build-lab decode-raw
 
 build-gui:
     cargo build --locked --release -p spektrafilm-gui
@@ -19,11 +19,6 @@ build-f64:
 # Build the lab instrument binary. f64 reference precision; links no renderer.
 build-lab:
     cargo build --locked --release -p spektrafilm-lab --features precision-f64
-
-# Build the benchmark's offline visual-report binary. It owns the photo report
-# command and shares no endpoint with the instrument.
-build-bench:
-    cargo build --locked --release -p spektrafilm-benchmark
 
 decode-raw:
     cargo build --locked --release -p spektrafilm-cli --bin decode_raw_gui
@@ -93,9 +88,9 @@ test-ci-tail:
 test-main:
     python3 scripts/test_selected.py ci
 
-# Run the native appearance benchmark regressions.
-benchmark-test:
-    cargo test --locked -p spektrafilm-benchmark
+# Run the measurement and report regressions.
+lab-test:
+    cargo test --locked -p spektrafilm-lab --features precision-f64
 
 # Measure CPU-reference vs GPU parity; fails on a budget breach or missing adapter.
 parity-backend:

@@ -51,7 +51,7 @@ See [CLI stage processing](cli.md#process-film-and-print-states) for executable 
 Boolean `--debug` adds stderr messages only; `--diagnostics REPORT` writes a structured
 execution report. Neither selects material output nor captures numerical observations.
 Dedicated research workflows own those buffers through the core observer under the
-[instrument native-observation contract](../specs/instrument/native-observations.md),
+
 not the `.sfstage` contract.
 
 ### Updating material controls

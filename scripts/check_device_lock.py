@@ -38,7 +38,7 @@ EXEMPT = {
     "crates/spektrafilm-gui/src/export_job.rs": "one device per export job",
     "crates/spektrafilm-cli/src/process.rs": "one device per invocation",
     # Benchmark harness instrumentation, not test code.
-    "crates/spektrafilm-benchmark/src/lib.rs": "benchmark instrumentation",
+    "crates/spektrafilm-lab/src/lib.rs": "measurement instrumentation",
 }
 
 CONSTRUCTOR = re.compile(r"WgpuBackend::new(?:_explicit)?\s*\(")

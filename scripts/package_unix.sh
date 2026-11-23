@@ -38,7 +38,7 @@ done
 
 mkdir -p "$dist_root/licenses"
 for license in nvlabs-flip-bsd-3-clause.txt littlecms-mit.txt; do
-    test -s "$repo_root/licenses/$license" || { echo "missing benchmark license: $repo_root/licenses/$license" >&2; exit 1; }
+    test -s "$repo_root/licenses/$license" || { echo "missing measurement license: $repo_root/licenses/$license" >&2; exit 1; }
     cp "$repo_root/licenses/$license" "$dist_root/licenses/$license"
 done
 for gui_asset_notice in NotoSansSC-OFL.txt NotoSansSC-NOTICE.txt; do

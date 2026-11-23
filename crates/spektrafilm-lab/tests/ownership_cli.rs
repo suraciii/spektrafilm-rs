@@ -1,7 +1,7 @@
 //! The lab refuses every endpoint another binary owns, and names the owner.
 //!
-//! The three research binaries share one endpoint vocabulary. An invocation
-//! that reaches the wrong binary must say which one owns it, because a caller
+//! The two research binaries share one endpoint vocabulary. An invocation that
+//! reaches the wrong binary must say which one owns it, because a caller
 //! reading a script's failure has no other way to find out.
 
 #![cfg(feature = "precision-f64")]
@@ -38,29 +38,10 @@ fn rejected(args: &[&str], owner: &str, endpoint: &str) {
 #[test]
 fn endpoints_of_the_renderer_are_refused() {
     for (args, endpoint) in [
-        (vec!["run", "suite"], "run"),
-        (vec!["run", "image"], "run"),
         (vec!["measure", "run"], "measure"),
-        (vec!["experiment", "run"], "experiment"),
-        (vec!["target"], "target"),
-        (vec!["fixtures"], "fixtures"),
         (vec!["spectral", "evaluate"], "spectral"),
         (vec!["fit"], "fit"),
     ] {
         rejected(&args, "spektrafilm-f64", endpoint);
-    }
-}
-
-#[test]
-fn endpoints_of_the_evaluation_surface_are_refused() {
-    for (args, endpoint) in [
-        (vec!["sample", "--source", "x"], "sample"),
-        (vec!["inspect", "--comparison", "x"], "inspect"),
-        (vec!["report", "comparison", "--comparison", "x"], "report"),
-        (vec!["compare", "runs", "--baseline", "a"], "compare runs"),
-        (vec!["compare", "readings"], "compare readings"),
-        (vec!["compare", "pairs"], "compare pairs"),
-    ] {
-        rejected(&args, "spektrafilm-bench", endpoint);
     }
 }

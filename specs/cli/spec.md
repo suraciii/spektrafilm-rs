@@ -488,7 +488,7 @@ The [stage artifact contract](stage-artifacts.md) owns the single-entry `.sfstag
 
 Public all-stage side capture is intentionally removed; neither debug nor separately executed partial renders are equivalent evidence.
 
-Dedicated instrument [native observations](../instrument/native-observations.md) remain research outputs. Their data format and capture contract are not a production continuation format or a debug feature.
+Dedicated instrument measurement remains a research output. Its data format is not a production continuation format or a debug feature.
 
 ## Discovery and dry run
 

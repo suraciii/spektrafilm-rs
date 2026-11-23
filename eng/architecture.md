@@ -11,10 +11,10 @@ crates/
   spektrafilm-core/       runtime facade, pipeline orchestration, profiles, stages
   spektrafilm-gpu/        ComputeBackend trait with CPU (rayon + BLAS) and WGPU backends
   spektrafilm-shaders/    spectral WGSL shaders and standalone Metal sources
-  spektrafilm-cli/        `spektrafilm`, `spektrafilm-f64`, `spektrafilm-lab`, `decode_raw_gui` and `lut`
+  spektrafilm-cli/        `spektrafilm`, `spektrafilm-f64`, `decode_raw_gui` and `lut`
+  spektrafilm-lab/        `spektrafilm-lab` binary and library: measurement, readings, documents, reports
   spektrafilm-gui/        egui/eframe preview window
   spektrafilm-raw/        LibRaw white balance and Lensfun correction
-  spektrafilm-benchmark/  evaluation library: metrics, documents, comparison, fixture generation, offline review, and the `spektrafilm-bench` photo report binary
 data/
   profiles/               film and paper JSON profiles
   luts/                   Hanatos2025 spectral basis and observer data
@@ -50,13 +50,13 @@ Feature ownership stays inside the existing crates:
 - `spektrafilm-core/src/params/`: grain, halation, diffusion, couplers, and glare each own their parameter types and feature-specific defaults. `RuntimeParams` remains the aggregate. Grain readers migrate historical numbered control names; serialization uses engine names.
 - `spektrafilm-core/src/params/migrations.rs` owns shared transformations of versioned legacy parameter documents. `params::sources` retains their established public entry points through direct re-exports; it does not implement migrations. Recipe, preset, and GUI-state readers retain their own version gates, payload scopes, and commit boundaries. Complete-parameter migrations preflight exposure and CMYK changes before mutating the document, preserving rejection precedence and leaving rejected input unchanged. Shared parameter diagnostics remain in `params::validation`.
 - `spektrafilm-gpu/src/wgpu_backend/`: each effect owns its buffers, pass encoding, and dedicated WGSL. `blur/` owns Gaussian FIR weight generation and its shared uniform layout. `film_chain.rs` owns resident orchestration and its resource lifetimes; `film_chain/plan.rs` owns the device-free stage topology, geometry, and binding-size preflight. `mod.rs` retains device setup and shared dispatch.
-- `spektrafilm-cli/src/process.rs` owns process arguments, invocation setup, preflight, rendering, and publication. `lib.rs` owns the shared command plumbing, data selection, and the `run` entry point used by both user binaries; `cli.rs` owns their shared command surface. The separate `spektrafilm-lab` crate owns the instrument's command surface; this crate's `lab/` module serves the f64 research endpoints.
+- `spektrafilm-cli/src/process.rs` owns process arguments, invocation setup, preflight, rendering, and publication. `lib.rs` owns the shared command plumbing, data selection, and the `run` entry point used by both user binaries; `cli.rs` owns their shared command surface. The separate `spektrafilm-lab` crate owns the instrument's command surface; this crate's `lab/` module serves the f64 measurement endpoints.
 - `spektrafilm-core/src/lut_baker/bundle.rs` owns canonical topology stage roles, taps, suffixes, and print sharing. Baking, QA, and OCIO consume those descriptors, including CMYK ink style final-stage roles. `lut_qa.rs` owns QA validation, pipeline construction, and report delivery; `lut_qa/scenarios.rs` owns the pinned print measurement suite and its shared cube-axis accumulator.
 - `spektrafilm-core/src/spectral_service.rs` owns the filming front end: the filtered film sensitivity, the RGB → film-raw upsampler (Hanatos2025 spectral LUT, the other registered LUTs, or the Mallett matrix), and the input-gamut remap at one boundary after the LUT. The matrix-only Mallett path stays separate. `pipeline_calibration` and the instrument's spectral evaluation call the same builder.
 - `spektrafilm-gui/src/app/state.rs` owns contiguous parameter-revision/dirty transitions, with a separate calibration-invalidating transition. State restoration retains its explicit ordering around profile and viewer updates.
 - `spektrafilm-gui/src/ui/` owns frame composition and the header, inspector, and settings surfaces. `app/dialog.rs` owns chooser boundaries, `app/input.rs` owns accepted-source replacement and rotation, and `app/material.rs` owns film/print selection and route normalization. `controls/applicability.rs` owns profile-dependent control applicability and the inspector's material cache.
 - `spektrafilm-backend/src/lib.rs` owns the `ComputeBackend` trait and its crate-root re-exports. `chain_params.rs`, `grain_params.rs`, `viewer_params.rs`, `dye_params.rs`, and `raw_params.rs` own the device-independent parameter records for their families.
-- `spektrafilm-benchmark/src/documents.rs` owns authored-document validation and shared document helpers. `documents/evidence.rs` owns generated run/comparison validation. `documents/masks.rs` owns render/reference geometry-mask decoding with their distinct acceptance rules.
+- `spektrafilm-lab/src/documents.rs` owns authored-document validation and shared document helpers. `documents/evidence.rs` owns generated run/comparison validation. `documents/masks.rs` owns render/reference geometry-mask decoding with their distinct acceptance rules.
 
 Canonical Rust paths include `spektrafilm_model::grain::spektra`, `spektrafilm_model::grain::procedural`, `spektrafilm_model::grain::exposure`, and `spektrafilm_core::params::grain::GrainParams`.
 The former flat module paths have been removed.
@@ -66,5 +66,5 @@ The former flat module paths have been removed.
 - [Project context](../CONTEXT.md).
 - [Pipeline](../docs/pipeline.md).
 - [Parity evidence](../docs/parity.md).
-- [Benchmarking](../docs/benchmark.md).
+- [Lab report](../specs/lab/report/spec.md).
 - [Film-chain specification](../specs/film-chain/spec.md).

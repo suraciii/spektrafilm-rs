@@ -13,8 +13,8 @@ install_root="${SPEKTRAFILM_INSTALL_ROOT:-$default_root}"
 bin_dir="${SPEKTRAFILM_BIN_DIR:-$HOME/.local/bin}"
 mkdir -p "$bin_dir"
 
-binaries=(spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-bench)
-cli_binaries=(spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-bench)
+binaries=(spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab)
+cli_binaries=(spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab)
 
 if [[ "$(uname -s)" == Linux ]]; then
     package_dir="$repo_root/dist/spektrafilm-linux-$(uname -m)"
@@ -59,7 +59,6 @@ Installed Spektrafilm to:
   $bin_dir/spektrafilm-f64
   $bin_dir/decode_raw_gui
   $bin_dir/spektrafilm-lab
-  $bin_dir/spektrafilm-bench
 
 Add $bin_dir to PATH if it is not already there.
 EOF
