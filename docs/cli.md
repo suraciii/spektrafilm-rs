@@ -167,8 +167,8 @@ spektrafilm describe --module effects.light_leak
 ./target/release/spektrafilm process input.png -o leak.tif \
     --lut look.cube \
     --set effects.light_leak.active=true \
-    --set effects.light_leak.gain=2.4 \
-    --set 'effects.light_leak.tint=[1.0,0.24,0.04]' \
+    --set effects.light_leak.gain=2.0 \
+    --set 'effects.light_leak.tint=[1.0,0.26,0.05]' \
     --set 'effects.light_leak.position=[-0.98,0.0]' \
     --set effects.light_leak.angle_deg=90 \
     --set effects.light_leak.width=0.45 \

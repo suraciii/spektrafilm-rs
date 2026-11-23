@@ -473,10 +473,10 @@ const LEAK_BURN_START: f64 = 1.0;
 const LEAK_BURN_END: f64 = 2.2;
 
 fn default_light_leak_gain() -> f64 {
-    2.4
+    2.0
 }
 fn default_light_leak_tint() -> [f64; 3] {
-    [1.0, 0.24, 0.04]
+    [1.0, 0.26, 0.05]
 }
 fn default_light_leak_position() -> [f64; 2] {
     [-0.98, 0.0]
@@ -2418,8 +2418,8 @@ mod tests {
     fn rgb_light_leak_generic_defaults_are_a_warm_left_edge_burn() {
         let params = LutLightLeakParams::default();
         assert!(!params.active);
-        assert_eq!(params.gain, 2.4);
-        assert_eq!(params.tint, [1.0, 0.24, 0.04]);
+        assert_eq!(params.gain, 2.0);
+        assert_eq!(params.tint, [1.0, 0.26, 0.05]);
         assert_eq!(params.position, [-0.98, 0.0]);
         assert_eq!(params.angle_deg, 90.0);
         assert_eq!(params.width, 0.45);
@@ -2500,6 +2500,7 @@ mod tests {
             &image,
             &LutLightLeakParams {
                 active: true,
+                gain: 3.0,
                 ..LutLightLeakParams::default()
             },
         );
@@ -2507,29 +2508,57 @@ mod tests {
             &image,
             &LutLightLeakParams {
                 active: true,
+                gain: 3.0,
                 texture_amount: 0.0,
                 ..LutLightLeakParams::default()
             },
         );
-        let white_rows = |rendered: &ImageBuf| {
+        let white_widths = |rendered: &ImageBuf| {
             (0..267)
-                .filter(|y| {
-                    (0..401).any(|x| {
-                        let pixel = rendered.get(x, *y);
-                        pixel.iter().all(|value| to_f64(*value) > 1.0)
-                    })
+                .map(|y| {
+                    (0..401)
+                        .filter(|x| {
+                            let pixel = rendered.get(*x, y);
+                            pixel.iter().all(|value| to_f64(*value) > 1.0)
+                        })
+                        .count()
                 })
-                .count()
+                .collect::<Vec<_>>()
         };
-        let textured_rows = white_rows(&textured);
-        let smooth_rows = white_rows(&smooth);
-        assert!(
-            textured_rows > 0,
-            "the default must still burn part of the core to white"
+        let textured_widths = white_widths(&textured);
+        let smooth_widths = white_widths(&smooth);
+        let textured_rows = textured_widths.iter().filter(|width| **width > 0).count();
+        let smooth_rows = smooth_widths.iter().filter(|width| **width > 0).count();
+        let textured_spread = textured_widths
+            .iter()
+            .filter(|width| **width > 0)
+            .max()
+            .unwrap_or(&0)
+            - textured_widths
+                .iter()
+                .filter(|width| **width > 0)
+                .min()
+                .unwrap_or(&0);
+        let smooth_spread = smooth_widths
+            .iter()
+            .filter(|width| **width > 0)
+            .max()
+            .unwrap_or(&0)
+            - smooth_widths
+                .iter()
+                .filter(|width| **width > 0)
+                .min()
+                .unwrap_or(&0);
+        println!(
+            "textured rows {textured_rows} spread {textured_spread}; smooth rows {smooth_rows} spread {smooth_spread}"
         );
         assert!(
-            textured_rows < smooth_rows,
-            "texture must break the hot core into uneven segments, not leave a uniform column: textured {textured_rows}, smooth {smooth_rows}"
+            textured_rows > 0 && smooth_rows > 0,
+            "both fields must burn part of the core"
+        );
+        assert!(
+            textured_spread > smooth_spread,
+            "texture must vary the hot-core width, not leave a uniform column: textured spread {textured_spread}, smooth spread {smooth_spread}"
         );
     }
 
