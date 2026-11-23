@@ -116,10 +116,10 @@ jobs:
           # executable device suite on llvmpipe; the package build and installed
           # smoke exercise the shipped binaries.
           ./scripts/package_windows_app.ps1 -DistDir "dist\spektrafilm-windows-x64"
-          $benchmarkPackage = (Resolve-Path 'dist\spektrafilm-windows-x64').Path
+          $labPackage = (Resolve-Path 'dist\spektrafilm-windows-x64').Path
           Push-Location $env:RUNNER_TEMP
           try {
-            & "$benchmarkPackage\spektrafilm-lab.exe" --help
+            & "$labPackage\spektrafilm-lab.exe" --help
             if ($LASTEXITCODE -ne 0) { throw "Packaged instrument help failed" }
           } finally { Pop-Location }
           if (-not (Test-Path -LiteralPath "dist\spektrafilm-windows-x64\licenses\nvlabs-flip-bsd-3-clause.txt")) { throw "FLIP license missing from package" }
@@ -219,7 +219,6 @@ jobs:
           cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui
           cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64
           cargo build --release -p spektrafilm-lab --features precision-f64
-          cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench
           # The f64-only CLI and instrument acceptance runs in the parallel
           # linux-f64-acceptance job; release attachment waits for it.
 

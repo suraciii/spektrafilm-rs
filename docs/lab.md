@@ -1,17 +1,16 @@
 # Measure delivered images
 
 `spektrafilm-lab` measures images that already exist: a render, an export, a scan.
-It never renders, and it presents nothing — it publishes records. This page covers
-the instrument itself: [`benchmark.md`](benchmark.md) covers the evaluation around
-it, and [`measurement.md`](measurement.md) covers chain measurement on a retained
-run.
+It never renders. It publishes records, and two report surfaces read them. This
+page covers the instrument itself; the report pages are specified in
+[`specs/lab/report/spec.md`](../specs/lab/report/spec.md).
 
 ## What it reads
 
 One raster (`PNG`, `TIFF`, `EXR`) or a directory of them, under a declaration you
 state:
 
-```
+```bash
 spektrafilm-lab analyze --source render.png --declaration sRGB:encoded --out /tmp/a
 ```
 
@@ -22,7 +21,7 @@ typo is refused while the arguments are read — nothing is created.
 
 To measure two images and their difference, point the same flags at a pair:
 
-```
+```bash
 spektrafilm-lab compare --baseline a.png --candidate b.png \
   --declaration sRGB:encoded --roi flat=0,0,64,64:flat_field --out /tmp/c
 ```
@@ -37,7 +36,7 @@ measured there. Pass one or more `--roi name=x,y,w,h[:role]`, or author a docume
 and pass `--regions file.json`. `regions` writes such a document from a grid
 without reading any image:
 
-```
+```bash
 spektrafilm-lab regions --rows 3 --columns 4 --patch-size 64x64 \
   --role flat_field --out grid.json
 ```
@@ -46,6 +45,21 @@ Geometry is in delivered pixels, the only coordinate space a raster has; the
 region identity defaults to the file stem, and the origin and gap to zero. The role
 is required, because a generator does not decide what a region is for. Pass
 `--id`, `--origin X,Y`, or `--gap X,Y` when the grid is offset or spaced.
+
+## Read declared windows
+
+`sample` reports the mean of each declared window, per channel, and writes the same
+`run.json` + `readings.csv` pair a measurement reader consumes:
+
+```bash
+spektrafilm-lab sample --source image.png --input-color-space sRGB \
+  --input-cctf-decoding false --regions grid.json --out /tmp/s
+```
+
+`--input-cctf-decoding true` declares that the stored values are transfer-encoded,
+so the reading applies the decoding; `false` reads them as they are. The command
+does not resize, re-encode, or convert beyond that declaration, and a window that
+leaves the raster fails instead of being clamped.
 
 ## What a row says
 
@@ -73,20 +87,20 @@ artifacts it references, and the materialized protocol with its digest. Query ro
 without reading the file layout:
 
 ```
-spektrafilm-bench inspect --comparison /tmp/c --metric grain.flat_mean.rms.R --side baseline
+spektrafilm-lab inspect --comparison /tmp/c --metric grain.flat_mean.rms.R --side baseline
 ```
 
 To look at a pair, build the offline page:
 
 ```
-spektrafilm-bench report comparison --comparison /tmp/c --out /tmp/report
+spektrafilm-lab report comparison --comparison /tmp/c --out /tmp/report
 ```
 
 ## Schema and validation
 
 One endpoint owns the document vocabulary:
 
-```
+```bash
 spektrafilm-lab document --kind regions            # print the schema
 spektrafilm-lab document --kind regions --check grid.json
 ```
@@ -98,7 +112,6 @@ kind does not exist.
 ## What it does not do
 
 - It does not render, and it does not link a renderer.
-- It does not present. Pages belong to `spektrafilm-bench`.
-- It does not apply acceptance rules. Policies and gates belong to
-  `spektrafilm-bench compare runs`.
+- It does not decide what an image looks like. A difference is an observation,
+  not a verdict.
 - It does not fit or calibrate. It measures what exists.

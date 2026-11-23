@@ -34,6 +34,6 @@ A device-free build MUST be able to name the error type. The type MUST NOT requi
 
 ## Precondition
 
-The migration MUST NOT start until a consumer that branches on a category exists. No consumer branches on one today: the CLI prints and exits, the GUI prints the message, and the benchmark owns its own typed error. Starting without that consumer would produce a category set with no exhaustive branch to protect, which is speculation rather than a contract.
+The migration MUST NOT start until a consumer that branches on a category exists. No consumer branches on one today: the CLI prints and exits, the GUI prints the message, and the lab owns its own typed error. Starting without that consumer would produce a category set with no exhaustive branch to protect, which is speculation rather than a contract.
 
 The compute backend boundary migration is the prerequisite, because it decides which crate owns the error type. The error type MUST move with the abstraction, not stay behind in a crate that domain code MUST NOT depend on.

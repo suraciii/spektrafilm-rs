@@ -78,7 +78,7 @@ The implementation MUST bump every complete-document schema that carries runtime
 
 LUT bundle metadata MUST advance from its current schema when its role vocabulary or provenance shape changes. The migration tables MUST name the accepted legacy versions and MUST never treat a current-schema document as a legacy carrier.
 
-Telemetry and stage-evidence schema versions remain unchanged unless their serialized field shape changes; their reports MUST carry the canonical `cmyk` configuration name after implementation.
+Telemetry schema versions remain unchanged unless their serialized field shape changes; its reports MUST carry the canonical `cmyk` configuration name after implementation.
 
 - The canonical runtime group is `cmyk` with `active` and `strength` leaves. New runtime documents, current-schema sparse sources, discovery, diagnostics, telemetry, GUI state, and LUT metadata MUST use `cmyk` terminology.
 - The retired `magazine_print_color.active` and `magazine_print_color.strength` fields are legacy fields. They MUST NOT be runtime aliases or current-schema editable paths.
@@ -128,7 +128,7 @@ Telemetry and stage-evidence schema versions remain unchanged unless their seria
 - CPU f64, native f32, and GPU outputs satisfy budgets owned by the GPU execution contract. An explicit GPU request cannot silently use CPU image arithmetic.
 - Legacy field migration is transactional and idempotent. Legacy/new conflicts reject.
 - Current-schema legacy paths reject. The retired route is not selectable.
-- GUI state, CLI recipes, presets, discovery, diagnostics, telemetry, benchmarks, specifications, and user documentation emit only the canonical new terminology after migration.
+- GUI state, CLI recipes, presets, discovery, diagnostics, telemetry, specifications, and user documentation emit only the canonical new terminology after migration.
 - The implementation MUST include visual review on the fixed research image and additional neutral/chromatic photographic probes. Research images are visual evidence, not a claim of physical-print accuracy.
 
 ***

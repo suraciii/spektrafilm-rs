@@ -46,12 +46,12 @@ A code variant MUST be justified by a named consumer that branches on it. The ca
 |----------|-----------------|--------|
 | CLI | exit-code selection | none observed; CLI prints and exits |
 | GUI | dialog class or recovery affordance | none observed; GUI prints the message |
-| benchmark report | stable error category in JSON | present, but benchmark owns its own typed error already |
+| lab report | stable error category in JSON | present, but the lab owns its own typed error already |
 | tests | assertion subject | present; 120 sites assert message text |
 
 Only a consumer that appears in this table with a real branch justifies a variant. Until one does, the code set stays minimal and the message stays the contract.
 
-The benchmark report is the one consumer with an established pattern: it already carries a typed error with a code, a message, an optional path, and an optional boundary, and it serializes all of them. That pattern is the precedent to follow if and when a report field requires a category.
+The lab report is the one consumer with an established pattern: it already carries a typed error with a code, a message, an optional path, and an optional boundary, and it serializes all of them. That pattern is the precedent to follow if and when a report field requires a category.
 
 ## Risks
 

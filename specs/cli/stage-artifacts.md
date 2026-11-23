@@ -156,8 +156,7 @@ All active parsers and help MUST remove `--stage-evidence`. There MUST be no dep
 
 Public `process` no longer provides simultaneous all-stage side capture. This is an intentional capability removal, not a claim that debug logs or separate partial renders provide equivalent evidence. Ordinary instrument suite and single-image runs MUST NOT gain implicit full capture to compensate.
 
-- Dedicated instrument measurement and experiment operations retain their explicit numerical-observation purpose under the [native observation contract](../instrument/native-observations.md). Research observation data is not a stage artifact and MUST NOT be accepted as one.
-- Its existing readers remain research readers, not aliases for artifact continuation. The experiment export input uses a positional `INPUT`, not the removed option.
+- Its existing readers remain research readers, not aliases for artifact continuation.
 
 Removing the process option MUST NOT delete the core observation machinery still required by those research operations. They MUST use the shared execution path with an explicit instrument-owned observation request, not shell out through a retired option. No research caller MAY relabel several executions as one captured run.
 

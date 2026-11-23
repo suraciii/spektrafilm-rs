@@ -4,10 +4,10 @@
 
 **PR — `ci-pr`:** Check tracked Python syntax, bytecode hygiene, documentation links and presentation, and workspace formatting; run the pure math unit tests in f32 and f64. This required gate must not restore the full workspace cache, install native libraries, compile the GUI/renderer, download image fixtures, or run native, rendering, GPU, browser, or platform acceptance. It uses a separate math-only cache with debug information disabled. New checks must add no more than 30 seconds, including preparation, compilation, linking, and execution.
 
-**Main — `ci`:** Run workspace type checks in both precisions, Clippy, and the full workspace suite, including rendering, GPU, GUI workers, benchmark, and statistical tests. These checks run after merge and do not block PR integration. A failure is handled as a separate integration repair. Moving tests out of PR must preserve regression coverage.
+**Main — `ci`:** Run workspace type checks in both precisions, Clippy, and the full workspace suite, including rendering, GPU, GUI workers, lab, and statistical tests. These checks run after merge and do not block PR integration. A failure is handled as a separate integration repair. Moving tests out of PR must preserve regression coverage.
 
 The full gate uses `test-main`. Cargo runs the complete default workspace,
-including the benchmark package, integration harnesses, and doctests. The gate
+including the lab package, integration harnesses, and doctests. The gate
 then reuses that invocation's GPU test executable for the device-free policy.
 It compiles the f64 fast targets together and runs the existing selections.
 `test-ci-tail` provides the same tail after a separate workspace invocation.
@@ -21,7 +21,7 @@ selection sets `SPEKTRAFILM_TEST_NO_DEVICE=1` in both precisions.
 Workspace features define the main gate's default coverage. The f64 selection
 uses the union of its selected packages' features. Package-only minimal
 dependency features are not a separate main-gate contract. `test-fast` compiles
-its targets once per precision. `benchmark-test` remains a standalone command.
+its targets once per precision. `lab-test` remains a standalone command.
 `parity-backend` uses the existing optimized test profile, retaining debug
 assertions, overflow checks, and the same numerical budgets.
 

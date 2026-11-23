@@ -76,7 +76,6 @@ impl Pipeline {
             backend,
             Some((pitch, metered_ev)),
             None,
-            None,
             Some(&mut geometry),
         )?;
         let print = if self.params.workflow.route_enum().prints() {
@@ -269,7 +268,6 @@ impl Pipeline {
             collect,
             backend,
             Some((header.geometry.pixel_size_um, 0.0)),
-            None,
             None,
             None,
         )?;

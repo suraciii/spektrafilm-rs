@@ -7,7 +7,7 @@ BUILD_TARGET_DIR="${BUILD_TARGET_DIR:-target/linux-app}"
 RELEASE_SUBDIR="${RELEASE_SUBDIR:-release}"
 DIST_DIR="${DIST_DIR:-dist/spektrafilm-linux-x64}"
 APP_NAME="$(basename "$DIST_DIR")"
-binaries=(spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-bench)
+binaries=(spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab)
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
@@ -212,9 +212,9 @@ for gui_asset_notice in NotoSansSC-OFL.txt NotoSansSC-NOTICE.txt; do
     [[ -s "crates/spektrafilm-gui/assets/$gui_asset_notice" ]] || fail "GUI asset notice missing: $gui_asset_notice"
     cp "crates/spektrafilm-gui/assets/$gui_asset_notice" "$DIST_DIR/share/licenses/$gui_asset_notice"
 done
-for benchmark_license in nvlabs-flip-bsd-3-clause.txt littlecms-mit.txt; do
-    [[ -s "licenses/$benchmark_license" ]] || fail "benchmark license missing: licenses/$benchmark_license"
-    cp "licenses/$benchmark_license" "$DIST_DIR/share/licenses/$benchmark_license"
+for measurement_license in nvlabs-flip-bsd-3-clause.txt littlecms-mit.txt; do
+    [[ -s "licenses/$measurement_license" ]] || fail "measurement license missing: licenses/$measurement_license"
+    cp "licenses/$measurement_license" "$DIST_DIR/share/licenses/$measurement_license"
 done
 [[ -s licenses/lensfun-cc-by-sa-3.0.txt ]] || fail "full Lensfun database license missing"
 mkdir -p "$DIST_DIR/share/licenses/lensfun-database"

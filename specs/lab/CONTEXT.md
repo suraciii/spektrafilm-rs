@@ -6,7 +6,7 @@ This context defines the language of the `spektrafilm-lab` instrument. The instr
 
 ### What is measured
 
-**Delivered image**: A raster that a render or a delivery produced, read as pixels under one declared color space and transfer state. It is not a stage capture, a raw master, or a working buffer.
+**Delivered image**: A raster that a render or a delivery produced, read as pixels under one declared color space and transfer state. It is not a raw master or a working buffer.
 _Avoid_: Output, result, capture, screenshot
 
 **Source**: One delivered image set read under one declaration. In a comparison a source takes the role of baseline or candidate; in an analysis there is one source and no second one.

@@ -4060,29 +4060,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spektrafilm-benchmark"
-version = "0.1.2"
-dependencies = [
- "anyhow",
- "cc",
- "clap",
- "exr",
- "image",
- "jsonschema",
- "libloading",
- "png",
- "rustfft",
- "ryu",
- "serde",
- "serde_json",
- "sha2",
- "spektrafilm-math",
- "tempfile",
- "tiff 0.10.3",
- "ureq",
-]
-
-[[package]]
 name = "spektrafilm-cli"
 version = "0.1.2"
 dependencies = [
@@ -4094,9 +4071,9 @@ dependencies = [
  "serde_json",
  "sha2",
  "spektrafilm-backend",
- "spektrafilm-benchmark",
  "spektrafilm-core",
  "spektrafilm-gpu",
+ "spektrafilm-lab",
  "spektrafilm-math",
  "spektrafilm-raw",
  "tempfile",
@@ -4194,14 +4171,21 @@ name = "spektrafilm-lab"
 version = "0.1.2"
 dependencies = [
  "anyhow",
+ "cc",
  "clap",
+ "exr",
  "image",
+ "jsonschema",
+ "libloading",
+ "png",
+ "rustfft",
+ "ryu",
  "serde",
  "serde_json",
  "sha2",
- "spektrafilm-benchmark",
  "spektrafilm-math",
  "tempfile",
+ "tiff 0.10.3",
 ]
 
 [[package]]
@@ -4745,7 +4729,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dea7109cdcd5864d4eeb1b58a1648dc9bf520360d7af16ec26d0a9354bafcfc0"
 dependencies = [
  "base64",
- "flate2",
  "log",
  "percent-encoding",
  "rustls",

@@ -221,7 +221,7 @@ pub fn summarize(metrics: &[SampleMetrics]) -> GroupSummary {
 fn quantile(values: &[f64], q: f64) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
-    spektrafilm_benchmark::metrics::quantile(&sorted, q).unwrap_or(f64::NAN)
+    spektrafilm_lab::metrics::quantile(&sorted, q).unwrap_or(f64::NAN)
 }
 
 fn quantile_abs(values: &[f64], q: f64) -> f64 {

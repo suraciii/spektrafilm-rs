@@ -1,439 +1,669 @@
-//! `compare`: adapt one declaration into one image comparison.
+//! `compare`: quantify two delivered image sets.
 //!
-//! The adapter owns argument shape, pairing, and the analysis profile. It owns
-//! no measurement: the engine quantifies and joins the two sides. It presents
-//! nothing; a page is one reading of the record and belongs to its reader.
+//! The comparison uses the version shape and the same metric engine as a
+//! version comparison, but its two sides are decoded files instead of
+//! retained runs. It publishes `baseline` and `candidate` source blocks of
+//! `kind: "images"` and never fabricates a run, a target, a suite, or an
+//! executed command.
 //!
-//! A delivered image has no executed command. This adapter therefore writes no
-//! run record, no target, and no argv; its comparison names the files by digest
-//! and by the declaration the caller made.
+//! Decoding goes through [`image_data::decode_raster`], the lab reader. It
+//! merges no sidecar, applies no ICC profile or orientation, and rejects a
+//! container layout it cannot state.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use clap::Args as ClapArgs;
-use serde_json::Value;
-use spektrafilm_benchmark::{Error, Result};
-use spektrafilm_benchmark::{
-    analysis::{self, Region},
-    images as engine, local_input,
-};
+use serde_json::{Value, json};
 
-#[derive(ClapArgs)]
-pub struct Args {
-    /// Baseline file, or a directory of delivered images.
-    #[arg(long, value_name = "PATH")]
-    pub baseline: std::path::PathBuf,
-    /// Candidate file, or a directory of delivered images.
-    #[arg(long, value_name = "PATH")]
-    pub candidate: std::path::PathBuf,
-    /// Declared color space and transfer state of both sides; the space is one
-    /// the instrument reads and the state is encoded or decoded.
-    #[arg(long, value_name = "SPACE:STATE")]
-    pub declaration: Declaration,
-    /// Declared region: name=x,y,w,h[:role]. Repeats. A role is one of skin,
-    /// neutral, shadow, highlight, color, flat_field, texture, edge, other; it
-    /// decides which families can be measured there.
-    #[arg(
-        long = "roi",
-        value_name = "ID=X,Y,W,H[:ROLE]",
-        conflicts_with = "regions"
-    )]
-    pub roi: Vec<String>,
-    /// Authored regions document in render coordinates.
-    #[arg(long, value_name = "FILE")]
-    pub regions: Option<std::path::PathBuf>,
-    /// Built-in analysis profile.
-    #[arg(long, value_name = "ID", value_parser = profiles())]
-    pub analysis: Option<String>,
-    /// Box-average retained difference maps to one sample per NxN block. It
-    /// changes no measured value.
-    #[arg(long, value_name = "N")]
-    pub map_scale: Option<u32>,
-    /// New comparison directory; must not exist.
-    #[arg(long, value_name = "DIR")]
-    pub out: std::path::PathBuf,
+use crate::common::{self, Error, Evidence, Result};
+use crate::compare::{publish_measurement_findings, relative_paths, retain_metrics, review_image};
+use crate::documents;
+use crate::image_data;
+use crate::metrics;
+use crate::retained;
+
+/// One declared image pair.
+pub struct Pair {
+    pub case_id: String,
+    pub baseline: PathBuf,
+    pub candidate: PathBuf,
 }
 
-/// The profile ids, with one owner: the profile table.
-///
-/// A caller picks a named recipe; the vocabulary is the table's, not a second
-/// literal that drifts from it.
-fn profiles() -> clap::builder::PossibleValuesParser {
-    clap::builder::PossibleValuesParser::new(analysis::PROFILES.iter().map(|profile| profile.id))
+/// One `compare` invocation.
+pub struct Request {
+    pub baseline_id: String,
+    pub candidate_id: String,
+    pub color_space: String,
+    pub cctf_decoding: bool,
+    pub pairs: Vec<Pair>,
+    pub regions: Vec<Value>,
+    pub protocol: Value,
+    /// Retained difference maps are box-averaged to one sample per `N × N`
+    /// block. Measurement populations are never reduced.
+    pub map_scale: u32,
 }
 
-pub fn run(args: &Args) -> Result<(Value, i32)> {
-    let map_scale = args.map_scale.unwrap_or(1);
-    if map_scale == 0 {
-        return Err(Error::new(
-            "argument_syntax",
-            "--map-scale requires a positive integer",
-        ));
-    }
-    let Declaration {
-        space: color_space,
-        decoding: cctf_decoding,
-    } = args.declaration;
-    let profile = analysis::profile(args.analysis.as_deref().unwrap_or("lab-appearance-v1"))?;
-    let protocol = analysis::protocol(profile);
-    let regions = regions_of(&args.regions, &args.roi)?;
-    let pairs = pairs(args)?;
-    let request = engine::Request {
-        baseline_id: source_id(&args.baseline),
-        candidate_id: source_id(&args.candidate),
-        color_space: color_space.to_owned(),
-        cctf_decoding,
-        pairs,
-        regions,
-        protocol,
-        map_scale,
-    };
-    engine::compare(&request, &args.out)
-}
-
-/// `SPACE:encoded|decoded` carries both facts one declaration needs.
-///
-/// Both halves are closed vocabularies, and both are decided here: the space
-/// comes from the measurement library's one list, and the transfer state has
-/// two values. A typo is a usage error, so it is refused while the arguments
-/// are read, before any destination exists.
-#[derive(Clone, Copy, Debug)]
-pub struct Declaration {
-    pub space: &'static str,
-    pub decoding: bool,
-}
-
-impl std::str::FromStr for Declaration {
-    type Err = String;
-
-    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
-        let (space, state) = value
-            .rsplit_once(':')
-            .ok_or_else(|| "--declaration must be SPACE:encoded or SPACE:decoded".to_owned())?;
-        let decoding = match state {
-            "encoded" => true,
-            "decoded" => false,
-            other => {
-                return Err(format!(
-                    "--declaration state must be encoded or decoded, not {other}"
-                ));
+/// A declared identity made safe for a document id.
+fn slug(value: &str) -> String {
+    let mut out: String = value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
+                c
+            } else {
+                '-'
             }
-        };
-        let space = spektrafilm_benchmark::image_data::COLOR_SPACES
-            .iter()
-            .find(|candidate| **candidate == space)
-            .ok_or_else(|| {
-                format!(
-                    "--declaration color space must be one of: {}",
-                    spektrafilm_benchmark::image_data::COLOR_SPACES.join(", ")
-                )
-            })?;
-        Ok(Self { space, decoding })
-    }
-}
-
-/// Parse `ID=X,Y,W,H[:ROLE]` declarations in order.
-fn declared_regions(values: &[String]) -> Result<Vec<Region>> {
-    let mut regions = Vec::new();
-    for value in values {
-        let (id, rest) = value.split_once('=').ok_or_else(|| {
-            Error::new(
-                "argument_syntax",
-                format!("--roi must be ID=X,Y,W,H[:ROLE], not {value}"),
-            )
-        })?;
-        analysis::validate_identity(id)?;
-        if regions.iter().any(|region: &Region| region.id == id) {
-            return Err(Error::new(
-                "duplicate_region_identity",
-                format!("--roi declares {id} twice"),
-            ));
-        }
-        let (numbers, role) = match rest.split_once(':') {
-            Some((numbers, role)) => (numbers, role),
-            None => (rest, "other"),
-        };
-        analysis::validate_role(role)?;
-        let fields: Vec<&str> = numbers.split(',').collect();
-        if fields.len() != 4 {
-            return Err(Error::new(
-                "argument_syntax",
-                format!("--roi {id} must carry x,y,w,h, not {numbers}"),
-            ));
-        }
-        let parse = |field: &str, name: &str| -> Result<u64> {
-            field.trim().parse::<u64>().map_err(|_| {
-                Error::new(
-                    "argument_syntax",
-                    format!("--roi {id} has a non-integer {name}: {field}"),
-                )
-            })
-        };
-        let region = Region {
-            id: id.to_owned(),
-            x: parse(fields[0], "x")?,
-            y: parse(fields[1], "y")?,
-            width: parse(fields[2], "width")?,
-            height: parse(fields[3], "height")?,
-            role: role.to_owned(),
-        };
-        if region.width == 0 || region.height == 0 {
-            return Err(Error::new(
-                "argument_syntax",
-                format!("--roi {id} must have a positive width and height"),
-            ));
-        }
-        regions.push(region);
-    }
-    Ok(regions)
-}
-
-/// The declared regions, from a document or from the command line.
-///
-/// Both measurement endpoints resolve geometry through this, so a region
-/// document and a `--roi` produce the same regions, and neither endpoint can
-/// drift in which of the two wins.
-fn regions_of(document: &Option<PathBuf>, roi: &[String]) -> Result<Vec<Value>> {
-    match (document, roi.is_empty()) {
-        (Some(path), _) => {
-            let value = local_input::load("regions", path)
-                .map_err(|error| error.at(path.display().to_string()))?;
-            value["regions"].as_array().cloned().ok_or_else(|| {
-                Error::new(
-                    "invalid_document",
-                    "regions document carries no regions array",
-                )
-            })
-        }
-        (None, false) => Ok(analysis::regions(&declared_regions(roi)?)),
-        (None, true) => Ok(Vec::new()),
-    }
-}
-
-/// One side's own name: the file stem, or the directory name.
-fn source_id(path: &Path) -> String {
-    path.file_stem()
-        .or_else(|| path.file_name())
-        .and_then(|value| value.to_str())
-        .unwrap_or("source")
-        .to_owned()
-}
-
-/// The case identity a file name carries: its stem, validated.
-///
-/// Both endpoints name the cases of one directory through this, so a record
-/// written by `analyze` and a record written by `compare` over the same
-/// directory name the same cases.
-fn case_of(name: &str) -> Result<String> {
-    case_identity(
-        Path::new(name)
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or(name),
-    )
-}
-
-fn case_identity(stem: &str) -> Result<String> {
-    let valid = stem
+        })
+        .collect();
+    if !out
         .chars()
         .next()
-        .is_some_and(|first| first.is_ascii_alphanumeric())
-        && stem
-            .chars()
-            .all(|value| value.is_ascii_alphanumeric() || matches!(value, '_' | '.' | '-'));
-    if !valid {
-        return Err(Error::new(
-            "invalid_case_identity",
-            format!("image name does not match ^[A-Za-z0-9][A-Za-z0-9_.-]*$: {stem}"),
-        ));
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+    {
+        out.insert(0, 'r');
     }
-    Ok(stem.to_owned())
+    out
 }
 
-/// The case identity of every file in a directory, keyed by file name.
+fn artifact_extension(path: &Path) -> String {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|value| format!(".{}", value.to_ascii_lowercase()))
+        .unwrap_or_default()
+}
+
+/// The cause of a case failure: the fatal finding's code and message.
 ///
-/// Two names that reduce to one identity are one case, so the directory is
-/// refused rather than measured twice. Both endpoints name the cases of one
-/// directory through this, so a record from either names them the same way.
-fn case_ids(files: &BTreeMap<String, PathBuf>) -> Result<BTreeMap<String, String>> {
-    let mut ids = BTreeMap::new();
-    let mut seen = BTreeSet::new();
-    for name in files.keys() {
-        let case_id = case_of(name)?;
-        if !seen.insert(case_id.clone()) {
+/// A failure records a finding; measurement rows also carry reasons, but a row
+/// reason may belong to a metric that was expected to be unavailable. A finding
+/// that only answers a question about its population is not the cause either.
+fn failure_cause(measured: &Value) -> (String, String) {
+    let findings = measured["findings"].as_array().into_iter().flatten();
+    let finding = findings
+        .clone()
+        .find(|finding| {
+            finding["code"]
+                .as_str()
+                .is_some_and(crate::metrics::is_fatal)
+        })
+        .or_else(|| findings.clone().next());
+    match finding {
+        Some(finding) => (
+            finding["code"]
+                .as_str()
+                .unwrap_or("measurement_failure")
+                .to_owned(),
+            finding["message"].as_str().unwrap_or("").trim().to_owned(),
+        ),
+        None => ("measurement_failure".into(), String::new()),
+    }
+}
+
+/// The protocol digest covers the protocol, the cases, and their regions.
+fn protocol_digest(request: &Request) -> Result<String> {
+    let cases: Vec<Value> = request
+        .pairs
+        .iter()
+        .map(|pair| {
+            json!({
+                "id": pair.case_id,
+                "regions": request.regions,
+            })
+        })
+        .collect();
+    documents::protocol_digest(&json!({"protocol": request.protocol, "cases": cases}))
+}
+
+fn source_block(
+    id: &str,
+    request: &Request,
+    role: &str,
+    files: &[(String, Value)],
+) -> Result<Value> {
+    let declaration = json!({
+        "color_space": request.color_space,
+        "cctf_decoding": request.cctf_decoding,
+    });
+    let list: Vec<Value> = files
+        .iter()
+        .map(|(case_id, record)| {
+            json!({
+                "case_id": case_id,
+                "path": record["path"],
+                "sha256": record["sha256"],
+                "width": record["width"],
+                "height": record["height"],
+                "role": role,
+            })
+        })
+        .collect();
+    Ok(json!({
+        "kind": "images",
+        "id": id,
+        "declaration": declaration,
+        "files": list,
+        "declaration_sha256": common::digest(&json!({"declaration": declaration, "files": list}))?,
+    }))
+}
+
+/// Validate the declared geometry before a pixel is read: a delivered raster
+/// carries only render coordinates, and `full_image` is the implicit
+/// population rather than an authored identity.
+fn validate_regions(regions: &[Value]) -> Result<()> {
+    for region in regions {
+        let id = region["id"].as_str().unwrap_or_default();
+        if id.is_empty() {
             return Err(Error::new(
-                "duplicate_case_identity",
-                format!("two files reduce to {case_id}"),
+                "invalid_region_identity",
+                "Every region needs a nonempty id",
             ));
         }
-        ids.insert(name.clone(), case_id);
-    }
-    Ok(ids)
-}
-
-fn listing(directory: &Path) -> Result<BTreeMap<String, PathBuf>> {
-    let mut files = BTreeMap::new();
-    let entries = std::fs::read_dir(directory).map_err(|error| {
-        Error::new(
-            "invalid_path",
-            format!("reading {}: {error}", directory.display()),
-        )
-    })?;
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        if !entry.file_type()?.is_file() {
-            continue;
+        if id == "full_image" {
+            return Err(Error::new(
+                "invalid_region_identity",
+                "`full_image` is the implicit population and is reserved",
+            ));
         }
-        let name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .ok_or_else(|| {
-                Error::new(
-                    "invalid_case_identity",
-                    format!("image name is not UTF-8: {}", path.display()),
-                )
-            })?
-            .to_owned();
-        files.insert(name, path);
-    }
-    Ok(files)
-}
-
-fn pairs(args: &Args) -> Result<Vec<engine::Pair>> {
-    match (args.baseline.is_dir(), args.candidate.is_dir()) {
-        (true, true) => {
-            let left = listing(&args.baseline)?;
-            let right = listing(&args.candidate)?;
-            let names: BTreeSet<&String> = left.keys().collect();
-            let other: BTreeSet<&String> = right.keys().collect();
-            if names != other {
-                let only_left: Vec<&str> = names
-                    .difference(&other)
-                    .map(|value| value.as_str())
-                    .collect();
-                let only_right: Vec<&str> = other
-                    .difference(&names)
-                    .map(|value| value.as_str())
-                    .collect();
-                return Err(Error::new(
-                    "incompatible_image_sets",
-                    format!(
-                        "only in baseline [{}], only in candidate [{}]",
-                        only_left.join(", "),
-                        only_right.join(", ")
-                    ),
-                ));
-            }
-            let ids = case_ids(&left)?;
-            let mut result = Vec::new();
-            for (name, path) in &left {
-                result.push(engine::Pair {
-                    case_id: ids[name].clone(),
-                    baseline: path.clone(),
-                    candidate: right[name].clone(),
-                });
-            }
-            if result.is_empty() {
-                return Err(Error::new(
-                    "incompatible_image_sets",
-                    format!("no image pairs in {}", args.baseline.display()),
-                ));
-            }
-            Ok(result)
+        let space = region["geometry"]["space"].as_str().unwrap_or_default();
+        if space != "render" {
+            return Err(Error::new(
+                "unsupported_coordinate_space",
+                format!(
+                    "Region {id} declares {space:?} geometry; a delivered raster has only render coordinates"
+                ),
+            )
+            .at(id));
         }
-        (false, false) => Ok(vec![engine::Pair {
-            case_id: case_identity(&source_id(&args.baseline))?,
-            baseline: args.baseline.clone(),
-            candidate: args.candidate.clone(),
-        }]),
-        _ => Err(Error::new(
-            "argument_syntax",
-            "--baseline and --candidate must both be files or both be directories",
-        )),
+    }
+    Ok(())
+}
+
+/// A rect outside the delivered image is an authoring error, not a reading.
+fn check_bounds(regions: &[Value], width: usize, height: usize, case_id: &str) -> Result<()> {
+    for region in regions {
+        let id = region["id"].as_str().unwrap_or_default();
+        let geometry = &region["geometry"];
+        let number = |key: &str| geometry[key].as_u64().unwrap_or_default();
+        let (x, y) = (number("x"), number("y"));
+        let (w, h) = (number("width"), number("height"));
+        if w == 0 || h == 0 || x + w > width as u64 || y + h > height as u64 {
+            return Err(Error::new(
+                "region_out_of_bounds",
+                format!(
+                    "Region {id} {x},{y} {w}x{h} leaves case {case_id} bounds {width}x{height}"
+                ),
+            )
+            .at(case_id));
+        }
+    }
+    Ok(())
+}
+
+/// Run one image comparison and publish its directory.
+pub fn compare(request: &Request, out: &Path) -> Result<(Value, i32)> {
+    let root = documents::normalize_path(out)?;
+    let preexisting = std::fs::symlink_metadata(out).is_ok();
+    let result = compare_impl(request, out);
+    if preexisting {
+        result
+    } else {
+        result.map_err(|error| common::incomplete_destination(error, &root, "comparison.json"))
     }
 }
 
-#[derive(ClapArgs)]
-pub struct AnalyzeArgs {
-    /// One delivered image, or a directory of delivered images.
-    #[arg(long, value_name = "PATH")]
-    pub source: std::path::PathBuf,
-    /// Declared color space and transfer state of the source; the space is one
-    /// the instrument reads and the state is encoded or decoded.
-    #[arg(long, value_name = "SPACE:STATE")]
-    pub declaration: Declaration,
-    /// Declared region: name=x,y,w,h[:role]. Repeats. A role is one of skin,
-    /// neutral, shadow, highlight, color, flat_field, texture, edge, other; it
-    /// decides which families can be measured there.
-    #[arg(
-        long = "roi",
-        value_name = "ID=X,Y,W,H[:ROLE]",
-        conflicts_with = "regions"
-    )]
-    pub roi: Vec<String>,
-    /// Authored regions document in render coordinates.
-    #[arg(long, value_name = "FILE")]
-    pub regions: Option<std::path::PathBuf>,
-    /// Built-in analysis profile. It materializes the protocol the record
-    /// retains, so a profile id is all a caller states.
-    #[arg(long, value_name = "ID", value_parser = profiles())]
-    pub analysis: Option<String>,
-    /// New analysis directory; must not exist.
-    #[arg(long, value_name = "DIR")]
-    pub out: std::path::PathBuf,
-}
-
-pub fn analyze_run(args: &AnalyzeArgs) -> Result<(Value, i32)> {
-    let Declaration {
-        space: color_space,
-        decoding: cctf_decoding,
-    } = args.declaration;
-    let profile = analysis::profile(args.analysis.as_deref().unwrap_or("lab-analysis-v1"))?;
-    let protocol = analysis::protocol(profile);
-    let regions = regions_of(&args.regions, &args.roi)?;
-    let files = analysis_files(&args.source)?;
-    let request = engine::AnalysisRequest {
-        source_id: source_id(&args.source),
-        color_space: color_space.to_owned(),
-        cctf_decoding,
-        files,
-        regions,
-        protocol,
-    };
-    engine::analyze(&request, &args.out)
-}
-
-/// One source is one file, or a directory of files that pair with nothing.
-fn analysis_files(source: &Path) -> Result<Vec<engine::Pair>> {
-    if !source.is_dir() {
-        let stem = source
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("source");
-        let case_id = case_identity(stem)?;
-        return Ok(vec![engine::Pair {
-            case_id,
-            baseline: source.to_path_buf(),
-            candidate: source.to_path_buf(),
-        }]);
+/// Refuse an input this instrument cannot measure before claiming a destination.
+///
+/// Nothing is published yet at this point, so the refusal must not leave a
+/// directory that the caller then has to remove before retrying the same path.
+fn classify_request<'a>(paths: impl Iterator<Item = &'a std::path::PathBuf>) -> Result<()> {
+    for path in paths {
+        image_data::classify_delivered(path)?;
     }
-    let listed = listing(source)?;
-    let ids = case_ids(&listed)?;
-    let mut files = Vec::new();
-    for (name, path) in listed {
-        files.push(engine::Pair {
-            case_id: ids[&name].clone(),
-            baseline: path.clone(),
-            candidate: path,
+    Ok(())
+}
+
+fn compare_impl(request: &Request, out: &Path) -> Result<(Value, i32)> {
+    if request.pairs.is_empty() {
+        return Err(Error::new("missing_image", "No image pair declared"));
+    }
+    validate_regions(&request.regions)?;
+    classify_request(
+        request
+            .pairs
+            .iter()
+            .flat_map(|pair| [&pair.baseline, &pair.candidate]),
+    )?;
+    let root = documents::normalize_path(out)?;
+    common::create_destination(&root)?;
+    let mut evidence = Evidence::new(&root);
+    common::dump(&root.join("protocol.json"), &request.protocol)?;
+    evidence.add(
+        &root.join("protocol.json"),
+        "protocol",
+        "application/json",
+        json!({"id": request.protocol["id"]}),
+    )?;
+    if !request.regions.is_empty() {
+        let regions = json!({
+            "schema_version": 1,
+            "id": slug(&format!("{}-{}", request.baseline_id, request.candidate_id)),
+            "regions": request.regions,
         });
+        common::dump(&root.join("regions.json"), &regions)?;
+        evidence.add(
+            &root.join("regions.json"),
+            "regions",
+            "application/json",
+            json!({"id": regions["id"]}),
+        )?;
     }
-    if files.is_empty() {
-        return Err(Error::new(
-            "missing_image",
-            format!("no delivered images in {}", source.display()),
-        ));
+    let mut cases = Vec::new();
+    let mut findings = Vec::new();
+    let mut differences = Vec::new();
+    let mut baseline_files = Vec::new();
+    let mut candidate_files = Vec::new();
+    for (field, value) in [
+        ("color_space", json!(request.color_space)),
+        ("cctf_decoding", json!(request.cctf_decoding)),
+    ] {
+        differences.push(json!({
+            "field": field,
+            "baseline": value,
+            "candidate": value,
+            "declared": true,
+        }));
     }
-    Ok(files)
+    for pair in &request.pairs {
+        let folder = root.join("cases").join(&pair.case_id);
+        std::fs::create_dir_all(&folder)?;
+        let sides = [("baseline", &pair.baseline), ("candidate", &pair.candidate)];
+        let mut images = Vec::new();
+        let mut records = Vec::new();
+        for (role, path) in sides {
+            let image =
+                image_data::decode_raster(path, &request.color_space, request.cctf_decoding)?
+                    .into_linear()?;
+            let source = evidence.copy(
+                path,
+                &format!(
+                    "cases/{}/{}-source{}",
+                    pair.case_id,
+                    role,
+                    artifact_extension(path)
+                ),
+                "source_image",
+                json!({
+                    "case_id": pair.case_id,
+                    "role": role,
+                    "color_space": request.color_space,
+                    "cctf_decoding": request.cctf_decoding,
+                    "width": image.width,
+                    "height": image.height,
+                    "dimensions": [image.width, image.height],
+                }),
+            )?;
+            records.push((pair.case_id.clone(), source.clone()));
+            images.push((role, image, source));
+        }
+        let (baseline_role, baseline, baseline_source) = &images[0];
+        let (candidate_role, candidate, candidate_source) = &images[1];
+        debug_assert_eq!(*baseline_role, "baseline");
+        debug_assert_eq!(*candidate_role, "candidate");
+        if baseline.dimensions() != candidate.dimensions() {
+            return Err(Error::new(
+                "dimension_mismatch",
+                format!(
+                    "Pair {} differs in dimensions: {}x{} and {}x{}",
+                    pair.case_id,
+                    baseline.width,
+                    baseline.height,
+                    candidate.width,
+                    candidate.height
+                ),
+            )
+            .at(&pair.case_id));
+        }
+        check_bounds(
+            &request.regions,
+            baseline.width,
+            baseline.height,
+            &pair.case_id,
+        )?;
+        differences.push(json!({
+            "field": "dimensions",
+            "case_id": pair.case_id,
+            "baseline": baseline.dimensions(),
+            "candidate": candidate.dimensions(),
+            "declared": true,
+        }));
+        baseline_files.push((pair.case_id.clone(), baseline_source.clone()));
+        candidate_files.push((pair.case_id.clone(), candidate_source.clone()));
+        let protocol = {
+            let mut protocol = request.protocol.clone();
+            protocol["case_id"] = json!(pair.case_id);
+            protocol
+        };
+        let measured = metrics::compare_images(
+            baseline,
+            candidate,
+            &request.regions,
+            &protocol,
+            &folder,
+            request.map_scale,
+        )?;
+        let measured = retain_metrics(measured, &folder, &mut evidence, &pair.case_id, 0)?;
+        let mut record = json!({
+            "case_id": pair.case_id,
+            "status": measured["execution_status"],
+            "measurements": measured["measurements"],
+            "regions": request.regions,
+            "region_readouts": measured["region_readouts"],
+            "automatic_regions": measured["automatic_regions"],
+            "artifacts": measured["artifacts"],
+        });
+        // One display copy per side, retained for inspection. The copy is an
+        // artifact; the record does not present it, so nothing here describes
+        // how it looks.
+        review_image(
+            baseline,
+            &folder.join("baseline.png"),
+            &mut evidence,
+            "baseline",
+            &pair.case_id,
+            0,
+        )?;
+        review_image(
+            candidate,
+            &folder.join("candidate.png"),
+            &mut evidence,
+            "candidate",
+            &pair.case_id,
+            0,
+        )?;
+        record["baseline_source"] = baseline_source.clone();
+        record["candidate_source"] = candidate_source.clone();
+        if let Some(readouts) = record["region_readouts"].as_array_mut() {
+            for readout in readouts {
+                readout["pair_id"] = json!("baseline/candidate");
+            }
+        }
+        relative_paths(&mut record["region_readouts"], &root);
+        let measurement_path = folder.join("measurements.json");
+        common::dump(
+            &measurement_path,
+            &json!({
+                "measurements": record["measurements"],
+                "region_readouts": record["region_readouts"],
+            }),
+        )?;
+        let measurement_evidence = evidence.add(
+            &measurement_path,
+            "measurements",
+            "application/json",
+            json!({}),
+        )?;
+        if let Some(rows) = measured["findings"].as_array().cloned() {
+            let mut rows = rows;
+            findings.extend(publish_measurement_findings(
+                &mut rows,
+                &[json!(pair.case_id), json!(0)],
+                &measurement_evidence["path"],
+            )?);
+        }
+        if record["status"] == "failed" {
+            let (reason, cause) = failure_cause(&measured);
+            return Err(Error::new(
+                reason,
+                format!("Measurements failed for case {}: {cause}", pair.case_id),
+            )
+            .at(&pair.case_id));
+        }
+        cases.push(record);
+    }
+    let baseline = source_block(&request.baseline_id, request, "baseline", &baseline_files)?;
+    let candidate = source_block(
+        &request.candidate_id,
+        request,
+        "candidate",
+        &candidate_files,
+    )?;
+    differences.push(json!({
+        "field": "analysis",
+        "baseline": request.protocol["id"],
+        "candidate": request.protocol["id"],
+        "declared": true,
+    }));
+    differences.push(json!({
+        "field": "map_scale",
+        "baseline": request.map_scale,
+        "candidate": request.map_scale,
+        "declared": true,
+    }));
+    let case_ids: Vec<Value> = request
+        .pairs
+        .iter()
+        .map(|pair| json!(pair.case_id))
+        .collect();
+    let digest = protocol_digest(request)?;
+    let mut manifest = json!({
+        "schema_version": 1,
+        "kind": "comparison",
+        // Which binary wrote this record. A `comparison` can come from the lab
+        // or from a record writer, and the kind alone does not say which.
+        "binary": "spektrafilm-lab",
+        "id": format!("{}-{}", request.baseline_id, request.candidate_id),
+        "execution_status": "completed",
+        "evaluation_status": "not_evaluated",
+        "baseline": baseline,
+        "candidate": candidate,
+        "protocol": request.protocol,
+        "map_scale": request.map_scale,
+        "protocol_digest": digest,
+        "selection": {"case_ids": case_ids, "all_cases": true},
+        "condition_differences": differences,
+        "cases": cases,
+        "findings": [],
+        "artifacts": evidence.values(),
+        // An image comparison evaluates no policy, so it has no rules to
+        // count. Writing `required_rules` or `protected_failures` as zero
+        // would state a fact about rules that do not exist.
+        "summary": {
+            "selected_cases": request.pairs.len(),
+            "completed_cases": request.pairs.len(),
+            "failed_results": 0,
+        },
+    });
+    retained::finalize(&root, "comparison.json", &mut manifest)?;
+    let mut result = json!({
+        "schema_version": 1,
+        "command": "compare",
+        "execution_status": "completed",
+        "evaluation_status": "not_evaluated",
+        "artifact": root.join("comparison.json").to_string_lossy().replace('\\', "/"),
+        "comparison_id": manifest["id"],
+        "protocol_digest": manifest["protocol_digest"],
+        "cases": request.pairs.len(),
+        "regions": request.regions.len(),
+    });
+    result["summary"] = manifest["summary"].clone();
+    Ok((result, 0))
+}
+
+/// One `analyze` invocation: one delivered image set measured on its own.
+pub struct AnalysisRequest {
+    pub source_id: String,
+    pub color_space: String,
+    pub cctf_decoding: bool,
+    pub files: Vec<Pair>,
+    pub regions: Vec<Value>,
+    pub protocol: Value,
+}
+
+/// Quantify one delivered image set and publish one analysis record.
+///
+/// The adapter owns argument shape, pairing, and the analysis profile; the
+/// engine quantifies. A measurement that needs a second source is recorded as
+/// unavailable by the family that cannot compute it, so this function never
+/// invents a side to measure against.
+pub fn analyze(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
+    let root = documents::normalize_path(out)?;
+    let preexisting = std::fs::symlink_metadata(out).is_ok();
+    let result = analyze_impl(request, out);
+    if preexisting {
+        result
+    } else {
+        result.map_err(|error| common::incomplete_destination(error, &root, "analysis.json"))
+    }
+}
+
+fn analyze_impl(request: &AnalysisRequest, out: &Path) -> Result<(Value, i32)> {
+    if request.files.is_empty() {
+        return Err(Error::new("missing_image", "No image declared"));
+    }
+    validate_regions(&request.regions)?;
+    classify_request(request.files.iter().map(|file| &file.baseline))?;
+    let root = documents::normalize_path(out)?;
+    common::create_destination(&root)?;
+    let mut evidence = Evidence::new(&root);
+    common::dump(&root.join("protocol.json"), &request.protocol)?;
+    evidence.add(
+        &root.join("protocol.json"),
+        "protocol",
+        "application/json",
+        json!({"id": request.protocol["id"]}),
+    )?;
+    let source_id = slug(&request.source_id);
+    if !request.regions.is_empty() {
+        let regions = json!({
+            "schema_version": 1,
+            "id": slug(&format!("{source_id}-regions")),
+            "regions": request.regions,
+        });
+        common::dump(&root.join("regions.json"), &regions)?;
+        evidence.add(
+            &root.join("regions.json"),
+            "regions",
+            "application/json",
+            json!({"id": regions["id"]}),
+        )?;
+    }
+    let mut cases = Vec::new();
+    let mut files = Vec::new();
+    for file in &request.files {
+        let folder = root.join("cases").join(&file.case_id);
+        std::fs::create_dir_all(&folder)?;
+        let image =
+            image_data::decode_raster(&file.baseline, &request.color_space, request.cctf_decoding)?
+                .into_linear()?;
+        let path = &file.baseline;
+        let source = evidence.copy(
+            path,
+            &format!("cases/{}/source{}", file.case_id, artifact_extension(path)),
+            "source_image",
+            json!({
+                "case_id": file.case_id,
+                "color_space": request.color_space,
+                "cctf_decoding": request.cctf_decoding,
+                "width": image.width,
+                "height": image.height,
+                "dimensions": [image.width, image.height],
+            }),
+        )?;
+        check_bounds(&request.regions, image.width, image.height, &file.case_id)?;
+        files.push((file.case_id.clone(), source.clone()));
+        let protocol = {
+            let mut protocol = request.protocol.clone();
+            protocol["case_id"] = json!(file.case_id);
+            protocol
+        };
+        let measured = metrics::analyze_image(&image, &request.regions, &protocol, &folder)?;
+        let measured = retain_metrics(measured, &folder, &mut evidence, &file.case_id, 0)?;
+        let mut record = json!({
+            "case_id": file.case_id,
+            "status": measured["execution_status"],
+            "measurements": measured["measurements"],
+            "regions": request.regions,
+            "region_readouts": measured["region_readouts"],
+            "automatic_regions": measured["automatic_regions"],
+            "artifacts": measured["artifacts"],
+            "source": source.clone(),
+        });
+        if record["status"] == "failed" {
+            let (reason, cause) = failure_cause(&measured);
+            return Err(Error::new(
+                reason,
+                format!("Case {} did not measure: {cause}", file.case_id),
+            )
+            .at(&file.case_id));
+        }
+        record["source"] = source.clone();
+        cases.push(record);
+    }
+    let declaration = json!({
+        "color_space": request.color_space,
+        "cctf_decoding": request.cctf_decoding,
+    });
+    let listed: Vec<Value> = files
+        .iter()
+        .map(|(case_id, record)| {
+            json!({
+                "case_id": case_id,
+                "path": record["path"],
+                "sha256": record["sha256"],
+                "width": record["width"],
+                "height": record["height"],
+                "role": "source",
+            })
+        })
+        .collect();
+    let source = json!({
+        "kind": "images",
+        "id": source_id,
+        "declaration": declaration,
+        "files": listed,
+        "declaration_sha256": common::digest(&json!({"declaration": declaration, "files": listed}))?,
+    });
+    let case_ids: Vec<Value> = request
+        .files
+        .iter()
+        .map(|file| json!(file.case_id))
+        .collect();
+    let digest = documents::protocol_digest(&json!({
+        "protocol": request.protocol,
+        "cases": request.files.iter().map(|file| json!({
+            "id": file.case_id,
+            "regions": request.regions,
+        })).collect::<Vec<_>>(),
+    }))?;
+    let mut manifest = json!({
+        "schema_version": 1,
+        "kind": "analysis",
+        "binary": "spektrafilm-lab",
+        "id": format!("{source_id}-analysis"),
+        "execution_status": "completed",
+        "source": source,
+        "protocol": request.protocol,
+        "protocol_digest": digest,
+        "selection": {"case_ids": case_ids, "all_cases": true},
+        "cases": cases,
+        "artifacts": evidence.values(),
+        // No policy, no rules: see the comparison summary above.
+        "summary": {
+            "selected_cases": request.files.len(),
+            "completed_cases": request.files.len(),
+            "failed_results": 0,
+        },
+    });
+    retained::finalize(&root, "analysis.json", &mut manifest)?;
+    let mut result = json!({
+        "schema_version": 1,
+        "command": "analyze",
+        "execution_status": "completed",
+        "artifact": root.join("analysis.json").to_string_lossy().replace('\\', "/"),
+        "analysis_id": manifest["id"],
+        "protocol_digest": manifest["protocol_digest"],
+        "cases": request.files.len(),
+        "regions": request.regions.len(),
+    });
+    result["summary"] = manifest["summary"].clone();
+    Ok((result, 0))
 }

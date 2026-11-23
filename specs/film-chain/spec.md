@@ -67,7 +67,6 @@ A route names its input state and each executed operation. A route ending in `fi
 - A film scan needs no paper profile; a print scan needs no film preparation or camera-side spectral resources. Required source context MUST be carried by the artifact rather than recovered by loading or reprocessing the original image.
 - On a negative `film > scan` with `scanner.scan_output = negative_to_positive`, the conversion reads the stored film record densities directly and retains the simulated negative's frozen camera exposure compensation. It subtracts that compensation just as `input > film > scan` does.
 - It MUST NOT estimate a new camera exposure from density, zero the compensation merely because the input is a material state, or synthesize a captured-negative recovery step. Real-negative `input > convert-film > scan` retains its existing exposure semantics.
-- Numerical research observations are owned by dedicated instrument workflows and the core observer under [Native observations](../instrument/native-observations.md). They are not `.sfstage` states and MUST NOT be attached to ordinary processing through an optional capture flag.
 - Boolean `--debug` is stderr-only and `--diagnostics REPORT` is execution reporting under [Debug and diagnostics](../cli/spec.md#debug-diagnostics); neither changes chain numerics or selects observation/material files.
 
 ### Continuation acceptance

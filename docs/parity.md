@@ -65,7 +65,6 @@ Isolated scanner-acquisition acceptance reports absolute **linear destination RG
 - [Pipeline](pipeline.md)
 - [Grain](grain.md)
 - [LUTs](luts.md)
-- [Benchmark](benchmark.md)
 - [Baseline evidence](parity/baseline_evidence.md)
 - [Parity matrix](parity/parity_matrix.md)
 - [Differential harness](../scripts/parity/README.md)

@@ -65,7 +65,7 @@ The feature MUST NOT allocate a four-channel image buffer, execute Python, parse
 
 ## Persistence and migration ownership
 
-The implementation MUST record the exact owner-specific version transition in each migration module and test it at the carrier boundary. A parameter-document version bump does not implicitly migrate presets, GUI state, RenderRecipe, LUT metadata, telemetry, or stage evidence.
+The implementation MUST record the exact owner-specific version transition in each migration module and test it at the carrier boundary. A parameter-document version bump does not implicitly migrate presets, GUI state, RenderRecipe, LUT metadata, or telemetry.
 
 Each carrier MUST reject its retired name in the new schema, accept it only in the explicitly listed legacy versions, and emit only canonical `cmyk` data after a successful migration.
 

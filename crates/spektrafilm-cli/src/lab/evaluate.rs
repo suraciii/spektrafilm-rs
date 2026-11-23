@@ -21,7 +21,7 @@ use super::cli::EvaluateArgs;
 use super::metrics::{self, SampleMetrics};
 use super::spectra::SpectraSet;
 use crate::select_data_dir;
-use spektrafilm_benchmark::readings::{csv_field, number_field, write};
+use spektrafilm_lab::readings::{csv_field, number_field, write};
 
 struct Condition {
     reference: String,

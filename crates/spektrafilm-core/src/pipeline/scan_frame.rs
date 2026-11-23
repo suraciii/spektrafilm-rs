@@ -404,7 +404,6 @@ impl Pipeline {
                         None,
                         None,
                         None,
-                        None,
                     )?
                 };
             self.check_cancelled()?;

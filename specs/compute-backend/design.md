@@ -61,7 +61,7 @@ graph TD
     raw[spektrafilm-raw]
     cli[spektrafilm-cli]
     gui[spektrafilm-gui]
-    bench[spektrafilm-benchmark]
+    lab[spektrafilm-lab]
 
     backend --> math
     gpu --> backend
@@ -83,10 +83,10 @@ graph TD
     gui --> model
     gui --> raw
     bench --> math
-    cli --> bench
+    cli --> lab
 ```
 
-`spektrafilm-benchmark` depends on `spektrafilm-math` only, so it is unaffected by the boundary.
+`spektrafilm-lab` depends on `spektrafilm-math` only, so it is unaffected by the boundary.
 
 `spektrafilm-cli` and `spektrafilm-gui` keep their direct `spektrafilm-gpu` dependency, because both select a device backend through `select_backend`.
 

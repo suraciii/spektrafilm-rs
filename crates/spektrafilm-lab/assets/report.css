@@ -1,0 +1,276 @@
+/* SpektraFilm review bench.
+   One neutral surround, one accent, one control height, one rhythm.
+   Every component below reads from the tokens and nothing else. */
+:root {
+  /* Neutral surround: R=G=B on purpose. A tinted UI biases colour judgement,
+     and this page exists so a person can judge colour. */
+  --bg: #242424;
+  --surface: #1e1e1e;
+  --surface-hi: #2b2b2b;
+  --line: #3a3a3a;
+  --line-hi: #4a4a4a;
+  --fg: #e9e9e9;
+  --muted: #9d9d9d;
+  /* The one accent: safelight amber. It marks a place — the seam, the locator,
+     the selected row — and nothing else. */
+  --accent: #d9a441;
+  --accent-soft: #d9a44126;
+
+  /* 4px rhythm; these six are the only gaps in the page */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px; --s12: 48px;
+
+  /* one control height, one control radius */
+  --h: 32px;
+  --h-touch: 44px;
+  --r: 4px;
+  --r-print: 2px;
+  --r-thumb: 3px;
+
+  --t: 120ms cubic-bezier(.2, .7, .3, 1);
+
+  --measure: 1200px;
+  --rail: 112px;
+  /* --thumb-w / --thumb-h are printed by render.rs, which does the crop maths */
+  --print: clamp(320px, 66vh, 820px);
+}
+
+/* Bootstrap 5.3 owns the widget behaviour; these variables make it speak this
+   page's language instead of its own. */
+[data-bs-theme=dark] {
+  --bs-body-bg: var(--bg);
+  --bs-body-color: var(--fg);
+  --bs-body-font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+  --bs-body-font-size: 15px;
+  --bs-body-line-height: 1.55;
+  --bs-secondary-color: var(--muted);
+  --bs-emphasis-color: #fff;
+  --bs-border-color: var(--line);
+  --bs-border-radius: 4px;
+  --bs-border-radius-sm: 3px;
+  --bs-tertiary-bg: var(--surface);
+  --bs-secondary-bg: var(--surface-hi);
+  --bs-focus-ring-width: 2px;
+  --bs-focus-ring-color: rgba(217, 164, 65, .45);
+}
+
+* { box-sizing: border-box; }
+html { color-scheme: dark; }
+body {
+  margin: 0 auto; padding: var(--s8); max-width: var(--measure);
+  background: var(--bg); color: var(--fg);
+  font: 400 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: var(--accent-soft); color: #fff; }
+* { scrollbar-width: thin; scrollbar-color: var(--line-hi) transparent; }
+
+button, select { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: 0; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r); }
+.stage:focus-visible, .divider:focus-visible { outline-offset: -3px; }
+
+/* ── head: the page names what it is about, and changing it is the title ─ */
+header {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: var(--s2); margin-bottom: var(--s6);
+}
+.brand { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
+h1 {
+  margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.02em; line-height: 1.2;
+}
+/* The case switcher is the title. Bootstrap supplies the menu; the page decides
+   what a title looks like. */
+.cases { position: relative; display: inline-flex; }
+.case-button {
+  display: inline-flex; align-items: center;
+  height: var(--h); padding: 0; border: 0; border-radius: var(--r);
+  background: none; color: var(--fg); cursor: pointer;
+  font-size: 22px; font-weight: 600; letter-spacing: -.02em; line-height: 1.2;
+}
+.case-button:hover, .case-button[aria-expanded=true] { color: #fff; }
+.case-button.dropdown-toggle::after { margin-left: var(--s2); vertical-align: .12em; color: var(--muted); }
+.case-button:hover.dropdown-toggle::after,
+.case-button[aria-expanded=true].dropdown-toggle::after { color: var(--fg); }
+.case-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.dropdown-menu {
+  --bs-dropdown-bg: var(--surface-hi);
+  --bs-dropdown-border-color: var(--line);
+  --bs-dropdown-border-radius: var(--r);
+  --bs-dropdown-padding-y: var(--s1);
+  --bs-dropdown-padding-x: var(--s1);
+  --bs-dropdown-font-size: 13px;
+  --bs-dropdown-min-width: 180px;
+  --bs-dropdown-spacer: var(--s1);
+  --bs-dropdown-link-color: var(--muted);
+  --bs-dropdown-link-hover-color: var(--fg);
+  --bs-dropdown-link-hover-bg: #ffffff10;
+  --bs-dropdown-link-active-color: var(--fg);
+  --bs-dropdown-link-active-bg: var(--accent-soft);
+  --bs-dropdown-link-focus-bg: #ffffff10;
+  box-shadow: 0 24px 48px -24px #000, 0 8px 16px -12px #000;
+}
+.dropdown-item {
+  --bs-dropdown-item-padding-y: 0;
+  --bs-dropdown-item-padding-x: 12px;
+  height: var(--h); display: flex; align-items: center; border-radius: 2px;
+}
+
+/* ── case ─────────────────────────────────────────────────────────────── */
+.case[hidden] { display: none; }
+.case + .case { margin-top: var(--s12); }
+.note { margin: 0 0 var(--s4); max-width: 68ch; color: var(--muted); font-size: 13px; }
+
+.frame {
+  display: grid; grid-template-columns: var(--rail) minmax(0, 1fr);
+  gap: var(--s6); align-items: start;
+}
+
+/* ── rail: the index of places ────────────────────────────────────────── */
+.views {
+  display: flex; flex-direction: column;
+  max-height: var(--print); overflow-y: auto; overscroll-behavior: contain;
+}
+/* a rail with more to show fades its edge, instead of cutting a thumbnail in half */
+.views[data-scroll] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
+}
+.views button {
+  display: flex; flex-direction: column; flex: none; gap: 6px; align-items: flex-start;
+  width: 100%; padding: 0 0 var(--s2); border: 0;
+  color: var(--muted); font-size: 12px; line-height: 1.25; text-align: left;
+  transition: color var(--t);
+}
+.views button:last-child { padding-bottom: 0; }
+.views .thumb {
+  display: block; width: 100%; aspect-ratio: var(--thumb-w) / var(--thumb-h);
+  border-radius: var(--r-thumb); border: 1px solid var(--line);
+  background-repeat: no-repeat; background-color: #1a1a1a;
+  transition: border-color var(--t);
+}
+.views button:hover { color: var(--fg); }
+.views button:hover .thumb { border-color: var(--line-hi); }
+.views button[aria-pressed=true] { color: var(--fg); }
+/* the choice is marked on the picture itself, so the rail keeps one clean edge */
+.views button[aria-pressed=true] .thumb { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.views .label {
+  overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: break-word;
+}
+
+/* ── the print ────────────────────────────────────────────────────────── */
+.right { min-width: 0; }
+.surface { width: min(100%, calc(var(--print) * var(--ar))); margin-inline: 0; }
+.surface[hidden] { display: none; }
+.stage {
+  position: relative; overflow: hidden; width: 100%; aspect-ratio: var(--ar);
+  border-radius: var(--r-print); background: #0f0f0f; touch-action: none;
+  box-shadow: 0 32px 64px -40px #000, 0 8px 24px -16px #000;
+  overscroll-behavior: contain;
+}
+.stage.zoomed { cursor: grab; }
+.stage.zoomed:active { cursor: grabbing; }
+.plane {
+  position: absolute; top: 0; left: 0; max-width: none;
+  transform-origin: 0 0; image-rendering: pixelated;
+  user-select: none; -webkit-user-drag: none; pointer-events: none;
+}
+.plane.variant { clip-path: inset(0 0 0 50%); }
+
+/* the seam: 2px of light, 24px of pointer */
+.divider {
+  position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px;
+  background: #fff; box-shadow: 0 0 0 1px #000c, 0 0 0 3px #ffffff1a;
+  cursor: ew-resize; touch-action: none;
+}
+.divider::before { content: ''; position: absolute; top: 0; bottom: 0; left: -11px; right: -11px; }
+.divider > span {
+  position: absolute; top: 50%; left: 50%; width: 28px; height: 28px;
+  margin: -14px 0 0 -14px; display: grid; place-items: center;
+  border-radius: 50%; background: #0e0e0ecc; border: 1px solid #ffffff2b;
+  color: #fff; backdrop-filter: blur(6px);
+}
+
+/* the two sides are named, quietly */
+.edge {
+  position: absolute; top: var(--s3); padding: 3px var(--s2); border-radius: var(--r-thumb);
+  font-size: 11px; letter-spacing: .01em; color: #f2f2f2;
+  background: #0e0e0ecc; backdrop-filter: blur(6px);
+  pointer-events: none; transition: opacity var(--t);
+}
+.edge-left { left: var(--s3); }
+.edge-right { right: var(--s3); }
+.stage[data-touched=true] .edge { opacity: .35; }
+
+/* where am I looking */
+.locator {
+  position: absolute; right: var(--s3); bottom: var(--s3); width: 96px;
+  border-radius: var(--r-thumb); overflow: hidden; border: 1px solid #ffffff26;
+  opacity: .85; pointer-events: none;
+}
+.locator img { display: block; width: 100%; height: auto; }
+.locator span {
+  position: absolute; min-width: 7px; min-height: 7px;
+  border: 1px solid var(--accent); background: var(--accent-soft);
+}
+
+/* ── bar: the controls live under the print, never on it ──────────────── */
+.hud {
+  display: flex; align-items: center; justify-content: flex-start;
+  gap: var(--s2); margin-top: 10px;
+}
+.hud .btn {
+  --bs-btn-padding-y: 0; --bs-btn-padding-x: var(--s2);
+  --bs-btn-font-size: 12px; --bs-btn-border-width: 0;
+  --bs-btn-color: var(--muted); --bs-btn-bg: transparent;
+  --bs-btn-hover-color: var(--fg); --bs-btn-hover-bg: #ffffff10;
+  --bs-btn-active-color: var(--fg); --bs-btn-active-bg: #ffffff14;
+  --bs-btn-disabled-color: #8b8b8b; --bs-btn-disabled-opacity: 1;
+  --bs-btn-disabled-bg: transparent;
+  --bs-btn-focus-box-shadow: none;
+  height: var(--h); min-width: var(--h);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.hud [data-scale] { --bs-btn-padding-x: 10px; }
+
+/* ── variants: the candidate picker ───────────────────────────────────── */
+.variants { display: flex; flex-wrap: wrap; gap: var(--s2); margin-bottom: var(--s3); }
+.variants .btn {
+  --bs-btn-padding-y: 0; --bs-btn-padding-x: var(--s3);
+  --bs-btn-font-size: 12px; --bs-btn-border-width: 1px;
+  --bs-btn-border-radius: 999px;
+  --bs-btn-color: var(--muted); --bs-btn-bg: var(--surface);
+  --bs-btn-border-color: var(--line);
+  --bs-btn-hover-color: var(--fg); --bs-btn-hover-bg: var(--surface);
+  --bs-btn-hover-border-color: var(--line-hi);
+  --bs-btn-focus-box-shadow: none;
+  height: var(--h);
+}
+.variants .btn[aria-selected=true] {
+  color: var(--fg); border-color: var(--accent); background: var(--accent-soft);
+}
+
+.view-note { margin: var(--s3) 0 0; color: var(--muted); font-size: 13px; }
+.view-note[hidden] { display: none; }
+.stages-pair { display: grid; gap: var(--s3); }
+
+/* ── small screens ────────────────────────────────────────────────────── */
+@media (max-width: 760px) {
+  body { padding: var(--s4); }
+  header { margin-bottom: var(--s4); }
+  h1, .case-button { font-size: 20px; }
+  .hud .btn, .variants .btn, .dropdown-item { height: var(--h-touch); }
+  .hud .btn { min-width: var(--h-touch); }
+  .frame { grid-template-columns: minmax(0, 1fr); gap: var(--s3); }
+  .views {
+    flex-direction: row; gap: var(--s2); max-height: none;
+    overflow-x: auto; overflow-y: hidden; padding-bottom: var(--s1);
+  }
+  .views[data-scroll] {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  }
+  .views button { width: var(--rail); flex: none; padding: 0 0 var(--s1); }
+  .locator { width: 72px; }
+}

@@ -395,8 +395,6 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Failed building f64 binaries" }
         cargo build --release -p spektrafilm-lab --features precision-f64 --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building the lab instrument" }
-        cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench --target-dir $BuildTargetDir
-        if ($LASTEXITCODE -ne 0) { throw "Failed building the benchmark binary" }
         $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
         $manifestPath = Join-Path $repo "target\packaging\embedded_bundle.rs"
         New-EmbedManifest -DataDir "data" -Destination $manifestPath
@@ -434,7 +432,6 @@ The adjacent native DLLs, external f64 exporter, helper, instrument binary and L
 - application data/profiles/LUTs
 - arctic2026alpha02 assets
 - spektrafilm-lab.exe for measurement, comparison, and reporting
-- spektrafilm-bench.exe for completed-run comparison and reporting
 On first launch it extracts the embedded payload to:
 %LOCALAPPDATA%\spektrafilm\embedded
 
@@ -451,8 +448,6 @@ Backends:
         if ($LASTEXITCODE -ne 0) { throw "Failed building f64 binaries" }
         cargo build --release -p spektrafilm-lab --features precision-f64 --target-dir $BuildTargetDir
         if ($LASTEXITCODE -ne 0) { throw "Failed building the lab instrument" }
-        cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench --target-dir $BuildTargetDir
-        if ($LASTEXITCODE -ne 0) { throw "Failed building the benchmark binary" }
 
         $releaseDir = Join-Path $BuildTargetDir $(if ($env:SPEKTRAFILM_RELEASE_SUBDIR) { $env:SPEKTRAFILM_RELEASE_SUBDIR } else { "release" })
         $guiExe = Join-Path $releaseDir "spektrafilm-gui.exe"
@@ -471,7 +466,7 @@ Backends:
         Write-Host "Packaged: $(Resolve-Path -LiteralPath $DistDir)"
         Write-Host "Icon:     $(Resolve-Path -LiteralPath $iconPath)"
     }
-    foreach ($binary in @("spektrafilm", "spektrafilm-f64", "decode_raw_gui", "spektrafilm-lab", "spektrafilm-bench")) {
+    foreach ($binary in @("spektrafilm", "spektrafilm-f64", "decode_raw_gui", "spektrafilm-lab")) {
         Copy-Item -LiteralPath (Join-Path $releaseDir "$binary.exe") -Destination (Join-Path $DistDir "$binary.exe") -Force
     }
     Copy-NativeBundle $DistDir

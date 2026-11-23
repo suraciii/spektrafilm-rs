@@ -112,7 +112,6 @@ impl Pipeline {
         &self,
         image: ImageBuf,
         backend: &dyn ComputeBackend,
-        capture: Option<&mut crate::stage_evidence::StageCapture>,
     ) -> Result<(ImageBuf, f64), String> {
         if !self.params.workflow.route_enum().exposes_film() {
             return Ok((image, 0.0));
@@ -121,19 +120,6 @@ impl Pipeline {
         // The device meter records its own GPU executor observation, so this
         // scope only exists to bound the host reference meter's stage.
         let metering = crate::stages::StageObservation::new(backend, "metering");
-        if let Some(capture) = capture {
-            capture.record_exposure_source(crate::stage_evidence::ExposureSource {
-                auto_enabled: self.params.camera.auto_exposure,
-                method: self.params.camera.auto_exposure_method.clone(),
-                source_dimensions: [image.width, image.height],
-                metered_ev: ae_ev,
-                metered_ev_source: if self.params.camera.auto_exposure {
-                    "measured"
-                } else {
-                    "disabled_zero"
-                },
-            });
-        }
         drop(metering);
         Ok((image, ae_ev))
     }

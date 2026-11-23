@@ -109,70 +109,17 @@ pub(crate) enum Commands {
         command: preset::PresetCommand,
     },
 
-    /// Pin a renderer executable in an existing target document.
-    #[cfg(feature = "precision-f64")]
-    Target {
-        /// Renderer executable.
-        #[arg(long, value_name = "FILE")]
-        renderer: PathBuf,
-        /// Explicit profile/data directory.
-        #[arg(long, value_name = "DIR")]
-        data_dir: PathBuf,
-        /// Requested compute backend; availability is checked during rendering.
-        #[arg(long, value_name = "BACKEND", value_parser = ["cpu", "gpu"])]
-        backend: String,
-        /// New target JSON file; must not exist.
-        #[arg(long, value_name = "FILE")]
-        out: PathBuf,
-    },
-    /// Execute an image-domain endpoint.
-    #[cfg(feature = "precision-f64")]
-    Run {
-        #[command(subcommand)]
-        command: crate::lab::cli::RunCommand,
-    },
-    /// Execute one declared chain measurement.
-    #[cfg(feature = "precision-f64")]
-    Measure {
-        #[command(subcommand)]
-        command: crate::lab::cli::MeasureCommand,
-    },
     /// Compare retained records through one explicit endpoint.
     #[cfg(feature = "precision-f64")]
     Compare {
         #[command(subcommand)]
         command: crate::lab::cli::CompareCommand,
     },
-    /// Generate the packaged examples: probe assets, suites, targets, and policy.
-    #[cfg(feature = "precision-f64")]
-    Fixtures {
-        /// Renderer executable the generated targets pin.
-        #[arg(long, value_name = "FILE")]
-        renderer: PathBuf,
-        /// Explicit profile/data directory.
-        #[arg(long, value_name = "DIR")]
-        data_dir: PathBuf,
-        /// New bundle directory; must not exist.
-        #[arg(long, value_name = "DIR")]
-        out: PathBuf,
-        /// Prepared local natural image.
-        #[arg(long, value_name = "FILE", conflicts_with = "download_natural")]
-        natural_input: Option<PathBuf>,
-        /// Download the pinned natural source instead of reading a local file.
-        #[arg(long)]
-        download_natural: bool,
-    },
     /// Spectral diagnostics.
     #[cfg(feature = "precision-f64")]
     Spectral {
         #[command(subcommand)]
         command: crate::lab::cli::SpectralCommand,
-    },
-    /// The development loop for a film profile.
-    #[cfg(feature = "precision-f64")]
-    Experiment {
-        #[command(subcommand)]
-        command: crate::lab::cli::ExperimentCommand,
     },
     /// Fit profile and look parameters against reference patch data.
     #[cfg(feature = "precision-f64")]
@@ -209,9 +156,6 @@ pub fn run() -> Result<()> {
     if let Some(status) = research::moved_invocation() {
         std::process::exit(status);
     }
-    #[cfg(feature = "precision-f64")]
-    let argv = research::normalize_legacy_argv();
-    #[cfg(not(feature = "precision-f64"))]
     let argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
     #[allow(unused_mut)]
     let mut command = Cli::command()
@@ -246,13 +190,8 @@ pub fn run() -> Result<()> {
     #[cfg(feature = "precision-f64")]
     if matches!(
         &cli.command,
-        Commands::Target { .. }
-            | Commands::Run { .. }
-            | Commands::Measure { .. }
-            | Commands::Compare { .. }
-            | Commands::Fixtures { .. }
+        Commands::Compare { .. }
             | Commands::Spectral { .. }
-            | Commands::Experiment { .. }
             | Commands::Fit(_)
             | Commands::External(_)
     ) {

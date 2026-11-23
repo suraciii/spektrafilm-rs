@@ -91,7 +91,7 @@ Film-only output retains an explicit future print selection by name without load
 
 Material output and continuation currently require `--backend cpu`. A selected GPU, including automatic GPU selection, fails before numerical processing or output publication for these routes. This limitation does not apply to retained GPU image-output workflows.
 
-`--debug` is a Boolean stderr-only diagnostic flag. It accepts no directory or value and creates no files. It does not change parameters, results, stdout, dry-run reports, artifact contents, or GPU timing collection. Redirect stderr with the shell to save text. `--diagnostics report.json` remains an independent structured-report request. The retired public `--stage-evidence` option has no alias; dedicated instrument native observations remain research data, not resumable material artifacts.
+`--debug` is a Boolean stderr-only diagnostic flag. It accepts no directory or value and creates no files. It does not change parameters, results, stdout, dry-run reports, artifact contents, or GPU timing collection. Redirect stderr with the shell to save text. `--diagnostics report.json` remains an independent structured-report request. The retired public `--stage-evidence` option has no alias and no replacement.
 
 The selected backend also owns RAW numerical processing. With a selected GPU,
 the CLI keeps the normalized, oriented linear ACES2065-1 result on that device
@@ -411,8 +411,7 @@ There is no `--stage-evidence` process option or replacement capture flag. Stage
 selected by the route and `-o`, not by `--save-stage`, `--export-stage`, or a directory
 argument to `--debug`. Dedicated research observation and measurement workflows own
 numerical buffers through the core observer; those observations are not `.sfstage` files.
-See the [instrument native-observation contract](../specs/instrument/native-observations.md)
-and [measurement](measurement.md). Existing `sample --from-evidence` and `sample --from-run`
+See [measure delivered images](lab.md). The `sample` reader
 remain research readers, not process-stage loaders.
 
 ## See also

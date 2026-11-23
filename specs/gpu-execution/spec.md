@@ -43,7 +43,7 @@ The host MAY validate profiles and resolve bounded, image-independent coefficien
 
 Bulk spectral-table generation, calibration sampling, and grain preparation that execute numerical workloads MUST also have GPU execution. The [design](design.md#preparation-boundary) defines this boundary.
 
-Reference analysis and profile-optimizer execution are not image-render execution. The benchmark's reference metrics do not have to use GPU arithmetic to judge a GPU render.
+Reference analysis and profile-optimizer execution are not image-render execution. The lab's reference metrics do not have to use GPU arithmetic to judge a GPU render.
 
 ## Backend selection
 

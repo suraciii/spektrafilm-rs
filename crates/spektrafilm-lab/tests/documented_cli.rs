@@ -8,17 +8,10 @@ fn documented_lab_commands_use_supported_flags() {
     let documents = [
         ("README.md", include_str!("../../../README.md")),
         (
-            "docs/measurement.md",
-            include_str!("../../../docs/measurement.md"),
-        ),
-        (
-            "docs/benchmark.md",
-            include_str!("../../../docs/benchmark.md"),
-        ),
-        (
             "docs/profile-fitting.md",
             include_str!("../../../docs/profile-fitting.md"),
         ),
+        ("docs/lab.md", include_str!("../../../docs/lab.md")),
     ];
     let mut checked = BTreeSet::new();
     for (name, document) in documents {
@@ -80,7 +73,7 @@ fn documented_lab_commands_use_supported_flags() {
     // Protect the documented workflow, not just an empty extraction. The
     // evaluation and reading endpoints are another binary's, so they are not
     // in this list even where a document names them in the same paragraph.
-    for subcommand in ["document", "compare", "regions"] {
+    for subcommand in ["document", "compare", "analyze"] {
         assert!(checked.contains(&Some(subcommand.into())), "{subcommand}");
     }
 }

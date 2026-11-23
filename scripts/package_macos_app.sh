@@ -107,7 +107,7 @@ package_native_dependencies() {
     destinations+=("$frameworks/liblcms2.2.dylib")
     executables+=("$lcms_source")
     inherited_paths+=("")
-    for name in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-bench; do
+    for name in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
         source="$(canonical_file "$BUILD_TARGET_DIR/release/$name")" || fail "missing executable $name"
         sources+=("$source")
         destinations+=("$APP_BUNDLE/Contents/MacOS/$name")
@@ -208,9 +208,9 @@ bundle_native_licenses() {
         [[ -s "crates/spektrafilm-gui/assets/$gui_asset_notice" ]] || fail "GUI asset notice missing: $gui_asset_notice"
         cp "crates/spektrafilm-gui/assets/$gui_asset_notice" "$output/$gui_asset_notice"
     done
-    for benchmark_license in nvlabs-flip-bsd-3-clause.txt littlecms-mit.txt; do
-        [[ -s "licenses/$benchmark_license" ]] || fail "benchmark license missing: licenses/$benchmark_license"
-        cp "licenses/$benchmark_license" "$output/$benchmark_license"
+    for measurement_license in nvlabs-flip-bsd-3-clause.txt littlecms-mit.txt; do
+        [[ -s "licenses/$measurement_license" ]] || fail "measurement license missing: licenses/$measurement_license"
+        cp "licenses/$measurement_license" "$output/$measurement_license"
     done
     local roots=() seen
     mkdir -p "$output"
@@ -278,11 +278,11 @@ cargo build --release -p spektrafilm-gui --target-dir "$BUILD_TARGET_DIR"
 cargo build --release -p spektrafilm-cli --bin spektrafilm --bin decode_raw_gui --target-dir "$BUILD_TARGET_DIR"
 cargo build --release -p spektrafilm-cli --bin spektrafilm-f64 --features precision-f64 --target-dir "$BUILD_TARGET_DIR"
 cargo build --release -p spektrafilm-lab --features precision-f64 --target-dir "$BUILD_TARGET_DIR"
-cargo build --release -p spektrafilm-benchmark --bin spektrafilm-bench --target-dir "$BUILD_TARGET_DIR"
+cargo build --release -pmark --bin --target-dir "$BUILD_TARGET_DIR"
 
 rm -rf "$DIST_DIR"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
-for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab spektrafilm-bench; do
+for executable in spektrafilm-gui spektrafilm spektrafilm-f64 decode_raw_gui spektrafilm-lab; do
     cp "$BUILD_TARGET_DIR/release/$executable" "$APP_BUNDLE/Contents/MacOS/$executable"
     chmod +x "$APP_BUNDLE/Contents/MacOS/$executable"
 done
