@@ -33,9 +33,9 @@ const LEAK_SHOULDER_SCALE: f32 = 0.48;
 const LEAK_CORE_RATIO: f32 = 0.55;
 const LEAK_BURN_START: f32 = 1.2;
 const LEAK_BURN_END: f32 = 2.4;
-const LEAK_HOTSPOT_CENTER: f32 = 0.05;
-const LEAK_HOTSPOT_WIDTH: f32 = 0.55;
-const LEAK_HOTSPOT_FLOOR: f32 = 0.12;
+const LEAK_CORE_LENGTH: f32 = 0.85;
+const LEAK_BURN_CENTER: f32 = 0.05;
+const LEAK_BURN_WIDTH: f32 = 0.45;
 const LEAK_CORE_BOOST: f32 = 0.35;
 fn hash2(x: u32, y: u32, seed: u32) -> f32 {
     var h = seed ^ 0x9E3779B9u;
@@ -141,12 +141,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let shoulder = exp(-q * q);
     let core_width = local_spread * LEAK_CORE_RATIO;
     let half = 0.5 * p.width;
-    let aperture_t = select(0.0, clamp(along / half, -1.0, 1.0), half > 0.0);
-    let hotspot = exp(
-        -pow((aperture_t - LEAK_HOTSPOT_CENTER) / LEAK_HOTSPOT_WIDTH, 2.0),
-    );
-    let core = exp(-(distance / core_width) * (distance / core_width))
-        * (LEAK_HOTSPOT_FLOOR + (1.0 - LEAK_HOTSPOT_FLOOR) * hotspot);
+    let aperture_t = select(0.0, along / half, half > 0.0);
+    let core_along = exp(-pow(aperture_t / LEAK_CORE_LENGTH, 2.0));
+    let core = exp(-(distance / core_width) * (distance / core_width)) * core_along;
 
     var modulation = 1.0;
     if texture_on {
@@ -161,9 +158,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
 
     let amplitude = p.gain * LEAK_SHOULDER_SCALE * shoulder * modulation;
     let core_amplitude = p.gain * core * modulation;
+    let burn_hotspot = exp(
+        -pow((clamp(aperture_t, -1.0, 1.0) - LEAK_BURN_CENTER) / LEAK_BURN_WIDTH, 2.0),
+    );
     let burn = smoothstep1(
         (core_amplitude - LEAK_BURN_START) / (LEAK_BURN_END - LEAK_BURN_START),
-    );
+    ) * burn_hotspot;
     let tint = vec3<f32>(p.tint_r, p.tint_g, p.tint_b);
     let hot = vec3<f32>(1.0, 0.92, 0.80);
     let core_orange = core_amplitude * LEAK_CORE_BOOST * (1.0 - burn);

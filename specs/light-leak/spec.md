@@ -21,7 +21,7 @@ Physical and measured evidence constrains whether the light looks credible. It d
 
 The default MUST be a soft warm band entering along one frame edge, with a red-orange shoulder and a brighter core that stays orange at the factory exposure. It MUST preserve subject contrast and black level. A high exposure MAY burn the narrow core toward white; the default MUST NOT ship a uniform white column or a clipped bar.
 
-The glow MUST read as light entering through an aperture on the frame perimeter. Its intensity MUST vary along the aperture and fade inward, and it MUST NOT form a circular patch, a symmetric spindle, or a chain of low-frequency lobes.
+The glow MUST read as light entering through an aperture on the frame perimeter. Its core MUST extend along the edge as a band, not peak as a round point. Its intensity MUST vary along the aperture and fade inward, and it MUST NOT form a circular patch, a symmetric spindle, or a chain of low-frequency lobes.
 
 A full-frame wash, an isolated centered blob, a uniform tint, a hard-edged bar, or a visibly periodic texture MUST NOT be the default.
 
@@ -66,7 +66,7 @@ The RGB geometry MUST mirror the Film leak contract. `position` is the aperture 
 
 `spread` is the inward e-folding length. `angle_deg` tilts the aperture relative to the perimeter tangent. The aperture center MUST stay on the perimeter; its ends MAY run past a corner.
 
-The initial geometry MUST read as a soft warm band entering at the top-left frame corner, mirroring the Film default aperture. It falls inward through a red-orange shoulder with a brighter core. Moving `position` to `0.90` places the same aperture on the left edge.
+The initial geometry MUST read as a long warm band entering along the left frame edge. Its aperture runs most of the frame height, and its orange core follows that run rather than concentrating into a round point. It falls inward through a red-orange shoulder with a brighter core.
 
 It MUST remain orange at the factory exposure; only a high exposure MAY burn the core toward white while the shoulder stays warm. The exposure MUST be an EV control over the additive leak amplitude, and zero MUST be an exact bypass.
 
@@ -107,5 +107,5 @@ A nonfinite value, an invalid geometry, or a value outside its declared domain M
 ## Acceptance
 
 1. Film adds edge-anchored stray exposure after camera optics and before Film Halation; an inactive leak is an exact bypass.
-2. RGB defaults add a soft warm top-left corner band before RGB Halation and the LUT; position walks the perimeter, width runs along the edge, spread falls inward, and exposure is an EV control. A high exposure burns the core toward white; an inactive or zero-exposure leak is an exact bypass and reads no film data.
+2. RGB defaults add a long warm left-edge band before RGB Halation and the LUT, with its orange core extending along the edge; position, width, spread, and exposure follow the Film semantics. A high exposure burns the core toward white; an inactive or zero-exposure leak is an exact bypass and reads no film data.
 3. Multiple exposure applies the active leak per exposure before composition through the method's single GUI owner.

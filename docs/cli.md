@@ -156,23 +156,23 @@ spektrafilm describe --module film_render.light_leak
 
 ### RGB light leak
 
-`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. It uses the Film leak geometry: `position` walks the frame perimeter from `0` to `1` clockwise from the top-left corner, `width` is the full aperture length along the edge, `spread` is the inward e-folding length, and `angle_deg` tilts the aperture relative to the perimeter tangent. `exposure_ev` is leak exposure in stops; zero is an exact bypass. The default is a soft warm top-left corner glow that stays orange; a high exposure burns the core toward white. Texture adds fine streaks without low-frequency lobes. `seed` selects deterministic texture. Zero exposure or a zero tint is an exact bypass.
+`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. It uses the Film leak geometry: `position` walks the frame perimeter from `0` to `1` clockwise from the top-left corner, `width` is the full aperture length along the edge, `spread` is the inward e-folding length, and `angle_deg` tilts the aperture relative to the perimeter tangent. `exposure_ev` is leak exposure in stops; zero is an exact bypass. The default is a long warm left-edge band that stays orange; a high exposure burns the core toward white. Texture adds fine streaks without low-frequency lobes. `seed` selects deterministic texture. Zero exposure or a zero tint is an exact bypass.
 
 ```bash
 spektrafilm describe --module effects.light_leak
 ```
 
 ```bash
-# The default soft top-left corner glow, written explicitly
+# The default long left-edge band, written explicitly
 ./target/release/spektrafilm process input.png -o leak.tif \
     --lut look.cube \
     --set effects.light_leak.active=true \
-    --set effects.light_leak.exposure_ev=0.75 \
+    --set effects.light_leak.exposure_ev=0.5 \
     --set 'effects.light_leak.tint=[1.0,0.26,0.05]' \
-    --set effects.light_leak.position=0.0 \
+    --set effects.light_leak.position=0.90 \
     --set effects.light_leak.angle_deg=0 \
-    --set effects.light_leak.width=0.67 \
-    --set effects.light_leak.spread=0.35 \
+    --set effects.light_leak.width=1.6 \
+    --set effects.light_leak.spread=0.32 \
     --set effects.light_leak.texture_amount=0.45 \
     --set effects.light_leak.texture_scale=0.08
 ```

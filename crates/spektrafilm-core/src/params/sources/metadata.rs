@@ -682,7 +682,7 @@ fn description(path: &str) -> Option<&'static str> {
             "Aperture tilt relative to the perimeter tangent, in degrees; zero follows the frame edge.",
         ),
         path if path.starts_with("effects.light_leak.") => Some(
-            "Peripheral tinted light leak for LUT and Off modes; one perimeter aperture uses the same position, width, spread, angle, and exposure semantics as the Film leak. The warm shoulder stays orange at low exposure; high exposure burns the core toward white. Texture adds fine streaks without low-frequency lobes. Added as linear light before RGB halation and the lookup.",
+            "Peripheral tinted light leak for LUT and Off modes; one perimeter aperture uses the same position, width, spread, angle, and exposure semantics as the Film leak. The orange core runs along the edge as a long band. The warm shoulder stays orange at low exposure; high exposure burns only the brightest segment toward white. Texture adds fine streaks without low-frequency lobes. Added as linear light before RGB halation and the lookup.",
         ),
         path if path.starts_with("effects.halation.") => Some(
             "Halation for LUT and Off modes in linear light before the lookup; it does not read film density or a film profile.",

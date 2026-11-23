@@ -1704,7 +1704,7 @@
   "surfaces.lut.diffusion": "扩散",
   "surfaces.lut.rgb_halation": "RGB 光晕",
   "surfaces.lut.rgb_light_leak": "RGB 漏光",
-  "surfaces.lut.rgb_light_leak_hint": "孔径遵循 Film 漏光的参数契约：位置沿画幅周长，宽度沿边缘，扩散向内，角度相对边缘切线。默认是左上角柔和光晕。默认曝光保持橙色，高曝光时核心烧向白色；纹理只增加细颗粒。",
+  "surfaces.lut.rgb_light_leak_hint": "孔径遵循 Film 漏光的参数契约：位置沿画幅周长，宽度沿边缘，扩散向内，角度相对边缘切线。默认是左侧长条带，橙色核心沿边缘延伸。默认曝光保持橙色，高曝光时只有最亮段烧向白色；纹理只增加细颗粒。",
   "surfaces.lut.light_leak_exposure": "漏光曝光 ev",
   "surfaces.lut.light_leak_exposure_help": "孔径曝光，以档计；0 为精确旁路。曝光不足时保持红橙色，高曝光时核心烧向白色。",
   "surfaces.lut.light_leak_width": "漏光宽度",

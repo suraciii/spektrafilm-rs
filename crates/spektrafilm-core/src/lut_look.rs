@@ -475,33 +475,33 @@ const LEAK_CORE_RATIO: f64 = 0.55;
 /// Core exposure range over which the warm tint burns toward white.
 const LEAK_BURN_START: f64 = 1.2;
 const LEAK_BURN_END: f64 = 2.4;
-// One smooth hotspot along the aperture keeps a strong leak from burning a
-// uniform white bar: the core peaks near the aperture center and falls off
-// toward both ends. The shoulder stays broad and continuous.
-const LEAK_HOTSPOT_CENTER: f64 = 0.05;
-const LEAK_HOTSPOT_WIDTH: f64 = 0.55;
-const LEAK_HOTSPOT_FLOOR: f64 = 0.12;
+// The orange core follows a long envelope along the aperture, so the default
+// reads as a band rather than a round point. The white burn keeps a shorter
+// envelope so a high exposure does not become a uniform white bar.
+const LEAK_CORE_LENGTH: f64 = 0.85;
+const LEAK_BURN_CENTER: f64 = 0.05;
+const LEAK_BURN_WIDTH: f64 = 0.45;
 // The core stays orange below the burn range; this boost gives it a readable
 // highlight instead of a flat shoulder-only band.
 const LEAK_CORE_BOOST: f64 = 0.35;
 
 fn default_light_leak_exposure_ev() -> f64 {
-    0.75
+    0.5
 }
 fn default_light_leak_tint() -> [f64; 3] {
     [1.0, 0.26, 0.05]
 }
 fn default_light_leak_position() -> f64 {
-    0.0
+    0.90
 }
 fn default_light_leak_angle() -> f64 {
     0.0
 }
 fn default_light_leak_width() -> f64 {
-    0.67
+    1.6
 }
 fn default_light_leak_spread() -> f64 {
-    0.35
+    0.32
 }
 fn default_light_leak_texture_amount() -> f64 {
     0.45
@@ -1879,14 +1879,9 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         let distance = (edge_x * edge_x + edge_y * edge_y).sqrt();
         let q = distance / spread;
         let shoulder = (-q * q).exp();
-        let aperture_t = if half > 0.0 {
-            (along / half).clamp(-1.0, 1.0)
-        } else {
-            0.0
-        };
-        let hotspot = (-((aperture_t - LEAK_HOTSPOT_CENTER) / LEAK_HOTSPOT_WIDTH).powi(2)).exp();
-        let core = (-(distance / (spread * LEAK_CORE_RATIO)).powi(2)).exp()
-            * (LEAK_HOTSPOT_FLOOR + (1.0 - LEAK_HOTSPOT_FLOOR) * hotspot);
+        let aperture_t = if half > 0.0 { along / half } else { 0.0 };
+        let core_along = (-(aperture_t / LEAK_CORE_LENGTH).powi(2)).exp();
+        let core = (-(distance / (spread * LEAK_CORE_RATIO)).powi(2)).exp() * core_along;
         let modulation = if texture {
             let streaks = spektrafilm_model::light_leak::streak_noise(
                 (along / (texture_scale * 3.0)) as f32,
@@ -1899,7 +1894,9 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         };
         let amplitude = exposure_gain * LEAK_SHOULDER_SCALE * shoulder * modulation;
         let core_amplitude = exposure_gain * core * modulation;
-        let burn = smoothstep(LEAK_BURN_START, LEAK_BURN_END, core_amplitude);
+        let burn_hotspot =
+            (-((aperture_t.clamp(-1.0, 1.0) - LEAK_BURN_CENTER) / LEAK_BURN_WIDTH).powi(2)).exp();
+        let burn = smoothstep(LEAK_BURN_START, LEAK_BURN_END, core_amplitude) * burn_hotspot;
         for channel in 0..3 {
             let core_orange = core_amplitude * LEAK_CORE_BOOST * (1.0 - burn) * leak.tint[channel];
             let core_white = core_amplitude * (LEAK_HOT_TINT[channel] - leak.tint[channel]) * burn;
@@ -2399,15 +2396,15 @@ mod tests {
     }
 
     #[test]
-    fn rgb_light_leak_generic_defaults_are_a_warm_top_left_corner() {
+    fn rgb_light_leak_generic_defaults_are_a_long_left_edge_band() {
         let params = LutLightLeakParams::default();
         assert!(!params.active);
-        assert_eq!(params.exposure_ev, 0.75);
+        assert_eq!(params.exposure_ev, 0.5);
         assert_eq!(params.tint, [1.0, 0.26, 0.05]);
-        assert_eq!(params.position, 0.0);
+        assert_eq!(params.position, 0.90);
         assert_eq!(params.angle_deg, 0.0);
-        assert_eq!(params.width, 0.67);
-        assert_eq!(params.spread, 0.35);
+        assert_eq!(params.width, 1.6);
+        assert_eq!(params.spread, 0.32);
         assert_eq!(params.texture_amount, 0.45);
         assert_eq!(params.texture_scale, 0.08);
     }
@@ -2458,7 +2455,7 @@ mod tests {
     }
 
     #[test]
-    fn rgb_light_leak_default_is_a_warm_top_left_corner() {
+    fn rgb_light_leak_default_is_a_long_left_edge_band() {
         let params = LutLightLeakParams {
             active: true,
             ..LutLightLeakParams::default()
@@ -2467,7 +2464,6 @@ mod tests {
         let rendered = apply_rgb_light_leak(&image, &params);
         let mut changed = 0usize;
         let mut changed_right = 0usize;
-        let mut changed_bottom = 0usize;
         let mut rows = [false; 67];
         let mut columns = [false; 101];
         for y in 0..67 {
@@ -2479,9 +2475,6 @@ mod tests {
                     if x >= 50 {
                         changed_right += 1;
                     }
-                    if y >= 34 {
-                        changed_bottom += 1;
-                    }
                 }
             }
         }
@@ -2491,10 +2484,6 @@ mod tests {
             "the default leak fogged {changed_right} of {changed} changed pixels in the opposite half"
         );
         assert!(
-            changed_bottom * 20 < changed,
-            "the default leak fogged {changed_bottom} of {changed} changed pixels below the middle"
-        );
-        assert!(
             changed * 2 < 101 * 67,
             "the default leak covered {changed} of {} pixels",
             101 * 67
@@ -2502,12 +2491,12 @@ mod tests {
         let changed_rows = rows.iter().filter(|hit| **hit).count();
         let changed_columns = columns.iter().filter(|hit| **hit).count();
         assert!(
-            changed_rows < 45 && changed_columns < 80,
-            "the default glow must be a corner aperture, not a full-edge bar: rows {changed_rows}, columns {changed_columns}"
+            changed_rows > 50 && changed_columns < 45,
+            "the default glow must be a long edge band, not a round point: rows {changed_rows}, columns {changed_columns}"
         );
         assert!(
             rows[..3].iter().any(|hit| *hit) && columns[..3].iter().any(|hit| *hit),
-            "the default glow must start at the top-left frame corner, not float inside it"
+            "the default glow must start at the left frame edge, not float inside it"
         );
         let mut max_min = 0.0_f64;
         for y in 0..67 {
@@ -2520,7 +2509,7 @@ mod tests {
             max_min < 0.5,
             "the default must stay orange, not burn a neutral white core: max min {max_min}"
         );
-        let shoulder = rendered.get(20, 20);
+        let shoulder = rendered.get(20, 33);
         assert!(
             to_f64(shoulder[0]) > to_f64(shoulder[1]) && to_f64(shoulder[1]) > to_f64(shoulder[2]),
             "the shoulder must stay warm, not turn neutral: {shoulder:?}"
