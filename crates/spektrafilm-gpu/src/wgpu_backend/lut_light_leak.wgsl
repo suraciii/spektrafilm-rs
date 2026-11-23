@@ -1,11 +1,10 @@
 // RGB light leak: a tinted additive spill from a gap on the frame edge.
 //
-// The field is a wide warm shoulder with a narrower hot core. A seeded slow
-// structure roughens the band, shifts and widens the core, and varies its
-// intensity, so the burn breaks into uneven white segments rather than a
-// uniform tube. The noise is the same integer lattice used by the Film
-// camera-light-leak field, but the geometry is frame-relative and this stage
-// reads no film data.
+// The aperture follows the same perimeter contract as the Film camera light
+// leak: position walks clockwise around the frame edge, width runs along the
+// tangent, spread falls inward, and angle tilts the segment. A warm shoulder
+// and a narrower hot core burn toward white with exposure. Seeded texture adds
+// fine streaks only; this stage reads no film data.
 
 struct Params {
     n: u32,
@@ -16,8 +15,7 @@ struct Params {
     tint_r: f32,
     tint_g: f32,
     tint_b: f32,
-    pos_x: f32,
-    pos_y: f32,
+    position: f32,
     angle_deg: f32,
     width: f32,
     spread: f32,
@@ -33,12 +31,12 @@ struct Params {
 const PI: f32 = 3.141592653589793;
 const LEAK_SHOULDER_SCALE: f32 = 0.48;
 const LEAK_CORE_RATIO: f32 = 0.55;
-const LEAK_BURN_START: f32 = 0.7;
-const LEAK_BURN_END: f32 = 1.7;
-const LEAK_HOTSPOT_CENTER: f32 = 0.08;
-const LEAK_HOTSPOT_WIDTH: f32 = 0.22;
-const LEAK_HOTSPOT_FLOOR: f32 = 0.22;
-
+const LEAK_BURN_START: f32 = 1.2;
+const LEAK_BURN_END: f32 = 2.4;
+const LEAK_HOTSPOT_CENTER: f32 = 0.05;
+const LEAK_HOTSPOT_WIDTH: f32 = 0.55;
+const LEAK_HOTSPOT_FLOOR: f32 = 0.12;
+const LEAK_CORE_BOOST: f32 = 0.35;
 fn hash2(x: u32, y: u32, seed: u32) -> f32 {
     var h = seed ^ 0x9E3779B9u;
     h = (h ^ (x * 0xC2B2AE3Du)) << 15u | (h ^ (x * 0xC2B2AE3Du)) >> 17u;
@@ -49,6 +47,26 @@ fn hash2(x: u32, y: u32, seed: u32) -> f32 {
     h = h * 0x9E377F1Bu;
     h = h ^ (h >> 13u);
     return f32(h >> 8u) / 16777216.0;
+}
+
+fn perimeter_point(t: f32, aspect: f32) -> vec4<f32> {
+    let w = 2.0 * aspect;
+    let h = 2.0;
+    let perimeter = 2.0 * (w + h);
+    var d = fract(t) * perimeter;
+    if d < w {
+        return vec4<f32>(-aspect + d, -1.0, 1.0, 0.0);
+    }
+    d = d - w;
+    if d < h {
+        return vec4<f32>(aspect, -1.0 + d, 0.0, 1.0);
+    }
+    d = d - h;
+    if d < w {
+        return vec4<f32>(aspect - d, 1.0, -1.0, 0.0);
+    }
+    d = d - w;
+    return vec4<f32>(-aspect, 1.0 - d, 0.0, -1.0);
 }
 
 fn smoothstep1(t: f32) -> f32 {
@@ -103,12 +121,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let frame_y = 2.0 * (y + 0.5) / image_height - 1.0;
 
     let angle = p.angle_deg * PI / 180.0;
-    let direction = vec2<f32>(cos(angle), sin(angle));
-    let center = vec2<f32>(p.pos_x * aspect, p.pos_y);
+    let perimeter = perimeter_point(p.position, aspect);
+    let center = perimeter.xy;
+    let tangent = perimeter.zw;
+    let direction = vec2<f32>(
+        tangent.x * cos(angle) - tangent.y * sin(angle),
+        tangent.x * sin(angle) + tangent.y * cos(angle),
+    );
     let offset = vec2<f32>(frame_x, frame_y) - center;
     let along = dot(offset, direction);
     let across = dot(offset, vec2<f32>(-direction.y, direction.x));
-    let closest = clamp(along, -p.width, p.width);
+    let closest = clamp(along, -0.5 * p.width, 0.5 * p.width);
     let edge = offset - direction * closest;
     let distance = length(edge);
 
@@ -117,11 +140,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let q = distance / local_spread;
     let shoulder = exp(-q * q);
     let core_width = local_spread * LEAK_CORE_RATIO;
-    let core = exp(-(distance / core_width) * (distance / core_width));
+    let half = 0.5 * p.width;
+    let aperture_t = select(0.0, clamp(along / half, -1.0, 1.0), half > 0.0);
+    let hotspot = exp(
+        -pow((aperture_t - LEAK_HOTSPOT_CENTER) / LEAK_HOTSPOT_WIDTH, 2.0),
+    );
+    let core = exp(-(distance / core_width) * (distance / core_width))
+        * (LEAK_HOTSPOT_FLOOR + (1.0 - LEAK_HOTSPOT_FLOOR) * hotspot);
 
     var modulation = 1.0;
     if texture_on {
-        let texture_scale = 0.25 / p.texture_scale;
+        let texture_scale = max(p.texture_scale, 1.0e-6);
         let streaks = streak_noise(
             along / (texture_scale * 3.0),
             across / texture_scale,
@@ -131,16 +160,18 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     }
 
     let amplitude = p.gain * LEAK_SHOULDER_SCALE * shoulder * modulation;
-    let hotspot = exp(-((along - LEAK_HOTSPOT_CENTER) / LEAK_HOTSPOT_WIDTH) * ((along - LEAK_HOTSPOT_CENTER) / LEAK_HOTSPOT_WIDTH));
-    let core_amplitude = p.gain * core * modulation
-        * (LEAK_HOTSPOT_FLOOR + (1.0 - LEAK_HOTSPOT_FLOOR) * hotspot);
+    let core_amplitude = p.gain * core * modulation;
     let burn = smoothstep1(
         (core_amplitude - LEAK_BURN_START) / (LEAK_BURN_END - LEAK_BURN_START),
     );
     let tint = vec3<f32>(p.tint_r, p.tint_g, p.tint_b);
     let hot = vec3<f32>(1.0, 0.92, 0.80);
+    let core_orange = core_amplitude * LEAK_CORE_BOOST * (1.0 - burn);
     let base = index * 3u;
-    pixels[base] = source[base] + amplitude * tint.r + core_amplitude * (hot.r - tint.r) * burn;
-    pixels[base + 1u] = source[base + 1u] + amplitude * tint.g + core_amplitude * (hot.g - tint.g) * burn;
-    pixels[base + 2u] = source[base + 2u] + amplitude * tint.b + core_amplitude * (hot.b - tint.b) * burn;
+    pixels[base] = source[base] + amplitude * tint.r + core_orange * tint.r
+        + core_amplitude * (hot.r - tint.r) * burn;
+    pixels[base + 1u] = source[base + 1u] + amplitude * tint.g + core_orange * tint.g
+        + core_amplitude * (hot.g - tint.g) * burn;
+    pixels[base + 2u] = source[base + 2u] + amplitude * tint.b + core_orange * tint.b
+        + core_amplitude * (hot.b - tint.b) * burn;
 }

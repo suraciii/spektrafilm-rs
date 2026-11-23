@@ -19,9 +19,9 @@ Light leak is an aesthetic finishing capability. Its value is to add a plausible
 
 Physical and measured evidence constrains whether the light looks credible. It does not decide the default look.
 
-The default MUST be a warm vertical glow entering from one frame edge, with a narrow hot core and a softer red-orange shoulder, that preserves subject contrast and black level.
+The default MUST be a soft warm band entering along one frame edge, with a red-orange shoulder and a brighter core that stays orange at the factory exposure. It MUST preserve subject contrast and black level. A high exposure MAY burn the narrow core toward white; the default MUST NOT ship a uniform white column or a clipped bar.
 
-The glow MUST read as light burning through an edge aperture. Its intensity MUST vary along the aperture, and its core MUST brighten toward white as leak exposure rises. It MUST NOT form a flat clipped bar, a uniform white column, a circular patch, a symmetric spindle, or a chain of low-frequency lobes.
+The glow MUST read as light entering through an aperture on the frame perimeter. Its intensity MUST vary along the aperture and fade inward, and it MUST NOT form a circular patch, a symmetric spindle, or a chain of low-frequency lobes.
 
 A full-frame wash, an isolated centered blob, a uniform tint, a hard-edged bar, or a visibly periodic texture MUST NOT be the default.
 
@@ -44,7 +44,7 @@ A leak MUST preserve floating headroom. A leak strong enough to drive the Film r
 
 The Film spectrum MUST be a per-record exposure ratio. The RGB tint MUST be linear RGB. Neither method MAY apply a fixed tint after development or output encoding.
 
-The two methods MUST NOT share one gain, tint, geometry, or texture parameter group. A shared spatial kernel MAY serve both models when each model supplies its own input, parameters, and composition.
+The two methods MUST NOT share one exposure scale, tint, geometry, or texture parameter group. A shared spatial kernel MAY serve both models when each model supplies its own input, parameters, and composition.
 
 ## Film track
 
@@ -60,13 +60,17 @@ RGB light leak is an appearance effect. It MUST NOT read a film profile, film de
 
 The RGB leak MUST be defined in the cropped composition frame. For a fixed crop, preview scale and output size MUST NOT change the leak geometry. The leak is evaluated after input crop/rescale and before the LUT.
 
-The RGB group MUST provide an active switch, a linear-light gain, a linear RGB tint, an edge aperture geometry, a texture amount, a texture scale, and a seed. The gain MUST be absolute; it MUST NOT scale with scene brightness.
+The RGB group MUST provide an active switch, an exposure in stops, a linear RGB tint, a perimeter aperture geometry, a texture amount, a texture scale, and a seed. The exposure MUST be absolute; it MUST NOT scale with scene brightness.
 
-The RGB geometry MUST be an aperture segment on or beyond a frame edge with a soft inward shoulder. `width` is the aperture half-length along its axis, `spread` is its half-width across the axis, and `angle` turns the aperture direction. A full-edge band uses a `width` at or above the frame half-height so its ends fall outside the frame.
+The RGB geometry MUST mirror the Film leak contract. `position` is the aperture center on the frame perimeter, `0..1` clockwise from the top-left corner. `width` is the full aperture length along the perimeter in normalized frame units.
 
-The initial geometry MUST read as a vertical burn entering along the left frame edge, brightest within a narrow core and falling inward through a wider orange shoulder. The default MUST NOT impose a uniform white column; only the overexposed core MAY reach white.
+`spread` is the inward e-folding length. `angle_deg` tilts the aperture relative to the perimeter tangent. The aperture center MUST stay on the perimeter; its ends MAY run past a corner.
 
-The gain MUST be the leak exposure control. At partial exposure the leak MUST remain red-orange; at full exposure its core MUST burn toward white while the shoulder stays warm. The transition MUST be continuous, without a hard threshold or banded step.
+The initial geometry MUST read as a soft warm band entering at the top-left frame corner, mirroring the Film default aperture. It falls inward through a red-orange shoulder with a brighter core. Moving `position` to `0.90` places the same aperture on the left edge.
+
+It MUST remain orange at the factory exposure; only a high exposure MAY burn the core toward white while the shoulder stays warm. The exposure MUST be an EV control over the additive leak amplitude, and zero MUST be an exact bypass.
+
+At partial exposure the leak MUST remain red-orange; at high exposure its core MUST burn toward white. The burned core MUST peak in one broad region along the aperture; it MUST NOT become a uniform full-height white bar. The transition MUST be continuous, without a hard threshold or banded step.
 
 Bright detail MAY still reach white where the added light exceeds the display range. Texture controls MUST add fine-scale streaks and edge roughness. They MUST NOT carve low-frequency lobes, torn patches, or disjoint blobs, and a broad symmetric taper or a uniform white bar MUST NOT be the result.
 
@@ -74,7 +78,7 @@ Zero texture MUST leave a smooth glow. The leak MUST preserve the subject and bl
 
 The default MUST NOT use a flat white bar, a uniform full-height column of equal brightness, a circular corner quarter-disc, a diagonal plume, a lens-like radial glow, a centered isolated spill, full-frame fog, or a visible periodic pattern.
 
-A zero gain, an inactive group, or an all-zero tint MUST be an exact bypass. Disabling the leak MUST retain its stored values.
+A zero exposure, an inactive group, or an all-zero tint MUST be an exact bypass. Disabling the leak MUST retain its stored values.
 
 The leak MUST be deterministic for the same input, parameters, geometry, and seed. It MUST NOT depend on frame chunking.
 
@@ -92,7 +96,7 @@ A leak MUST NOT run a second time on a composed or developed output.
 
 The Film stage MUST expose the Film light-leak controls under [GUI workflow](../gui-workflow/spec.md#complete-control-access). The Effects stage MUST expose the RGB light-leak controls. Each method MUST have one editable owner.
 
-The RGB **Leak width** control MUST change the visible band thickness across the edge; a separate **Leak length** control MUST change the band extent along the edge.
+The RGB controls MUST use the Film leak order and semantics: **Leak exposure**, **Leak position**, **Leak width**, **Leak spread**, **Leak angle**, tint, texture, and seed. **Leak width** MUST change the aperture extent along the edge; **Leak spread** MUST change the visible thickness inward. RGB MUST NOT expose a separate **Leak length** control.
 
 A Film preset MUST capture the Film group. An Effects preset MUST capture the RGB group. Built-in presets MUST NOT include an RGB light-leak preset.
 
@@ -103,5 +107,5 @@ A nonfinite value, an invalid geometry, or a value outside its declared domain M
 ## Acceptance
 
 1. Film adds edge-anchored stray exposure after camera optics and before Film Halation; an inactive leak is an exact bypass.
-2. RGB defaults add a vertical left-edge burn with a narrow hot core and a warm red-orange shoulder before RGB Halation and the LUT; raising gain drives the core toward white while lowering it keeps the leak orange. An inactive or zero-gain leak is an exact bypass and reads no film data.
+2. RGB defaults add a soft warm top-left corner band before RGB Halation and the LUT; position walks the perimeter, width runs along the edge, spread falls inward, and exposure is an EV control. A high exposure burns the core toward white; an inactive or zero-exposure leak is an exact bypass and reads no film data.
 3. Multiple exposure applies the active leak per exposure before composition through the method's single GUI owner.

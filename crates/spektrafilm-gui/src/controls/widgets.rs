@@ -367,7 +367,7 @@ pub(crate) fn tuple_identifiers(path: &str) -> &'static [&'static str] {
         // Gamut knee: core owns the component names.
         "io.input_gamut_compress.knee" | "io.output_gamut_compress.knee" => KNEE_IDENTIFIERS,
         // Frame-relative points and crop rectangles.
-        "effects.light_leak.position" | "io.crop_center" | "io.crop_size" => XY_IDENTIFIERS,
+        "io.crop_center" | "io.crop_size" => XY_IDENTIFIERS,
         // Digital sharpening: sigma then amount.
         "scanner.unsharp_mask" => USM_IDENTIFIERS,
         // Micro-structure: scale then clump size.

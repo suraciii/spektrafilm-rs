@@ -641,7 +641,7 @@ pub struct Lut3dLookGpuParams<'a> {
 pub struct LutLightLeakGpuParams {
     pub gain: f32,
     pub tint: [f32; 3],
-    pub position: [f32; 2],
+    pub position: f32,
     pub angle_deg: f32,
     pub width: f32,
     pub spread: f32,

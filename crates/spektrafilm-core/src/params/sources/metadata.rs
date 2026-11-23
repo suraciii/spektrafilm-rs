@@ -666,14 +666,23 @@ fn description(path: &str) -> Option<&'static str> {
         path if path.starts_with("grade.") => {
             Some("Post-LUT Tone & Color response; independent from film-chain finishing.")
         }
+        "effects.light_leak.exposure_ev" => Some(
+            "RGB leak exposure in stops over the appearance reference. Zero is an exact bypass; low values stay red-orange and high values burn the core toward white.",
+        ),
+        "effects.light_leak.position" => Some(
+            "Aperture center around the frame perimeter, 0 to 1, measured clockwise from the top-left corner. The aperture stays anchored to the edge.",
+        ),
         "effects.light_leak.width" => Some(
-            "Half-length of the RGB leak band along its axis in normalized frame units. At or above the frame half-height the band runs past both frame edges. The GUI labels this Leak length.",
+            "Full aperture length along the frame perimeter in normalized frame units. At or above the edge length the aperture runs past both corners.",
         ),
         "effects.light_leak.spread" => Some(
-            "Half-width of the RGB leak band across its axis in normalized frame units; the profile is a Gaussian falloff with no hard cutoff, negligible by two and a half spreads. Texture roughens this width along the band without a broad symmetric taper. The GUI labels this Leak width.",
+            "Inward e-folding length of the RGB leak in normalized frame units; the profile is a Gaussian falloff with no hard cutoff.",
+        ),
+        "effects.light_leak.angle_deg" => Some(
+            "Aperture tilt relative to the perimeter tangent, in degrees; zero follows the frame edge.",
         ),
         path if path.starts_with("effects.light_leak.") => Some(
-            "Frame-relative tinted light leak for LUT and Off modes; the default is a vertical warm burn along the left frame edge, with a narrow hot core and a wider red-orange shoulder; the hot core peaks in one broad region along the aperture, so the burn is not a uniform white bar. Gain is leak exposure: partial exposure stays red-orange, while full exposure burns the core toward white and leaves the shoulder warm. Texture adds fine streaks without carving low-frequency lobes. Added as linear light before RGB halation and the lookup.",
+            "Peripheral tinted light leak for LUT and Off modes; one perimeter aperture uses the same position, width, spread, angle, and exposure semantics as the Film leak. The warm shoulder stays orange at low exposure; high exposure burns the core toward white. Texture adds fine streaks without low-frequency lobes. Added as linear light before RGB halation and the lookup.",
         ),
         path if path.starts_with("effects.halation.") => Some(
             "Halation for LUT and Off modes in linear light before the lookup; it does not read film density or a film profile.",

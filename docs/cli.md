@@ -156,24 +156,25 @@ spektrafilm describe --module film_render.light_leak
 
 ### RGB light leak
 
-`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. Its default is a vertical warm burn entering along the left frame edge, with a narrow hot core and a wider red-orange shoulder. The hot core peaks in one broad region along the aperture, so the burn is not a uniform white bar. `gain` is leak exposure: partial exposure stays red-orange, while full exposure burns the core toward white and leaves the shoulder warm. `position` places the aperture center, `angle_deg` turns the aperture axis (`0` runs along the top edge, `90` down a side), `width` is its half-length along the axis, and `spread` is its half-width across the axis with a soft shoulder. Texture strength adds fine streaks and edge roughness; it does not apply a broad symmetric taper, and zero leaves a smooth glow. The frame is normalized to its aspect ratio; `position` is in `[-1, 1]`, `width` and `spread` are normalized lengths, and `seed` selects deterministic texture. The GUI labels the visible thickness (`spread`) **Leak width** and the axis half-length (`width`) **Leak length**; the CLI keeps the parameter names. Keep `width` at or above the frame half-height for a full-edge band. Zero gain or a zero tint is an exact bypass.
+`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. It uses the Film leak geometry: `position` walks the frame perimeter from `0` to `1` clockwise from the top-left corner, `width` is the full aperture length along the edge, `spread` is the inward e-folding length, and `angle_deg` tilts the aperture relative to the perimeter tangent. `exposure_ev` is leak exposure in stops; zero is an exact bypass. The default is a soft warm top-left corner glow that stays orange; a high exposure burns the core toward white. Texture adds fine streaks without low-frequency lobes. `seed` selects deterministic texture. Zero exposure or a zero tint is an exact bypass.
 
 ```bash
 spektrafilm describe --module effects.light_leak
 ```
 
 ```bash
-# The default vertical left-edge burn, written explicitly
+# The default soft top-left corner glow, written explicitly
 ./target/release/spektrafilm process input.png -o leak.tif \
     --lut look.cube \
     --set effects.light_leak.active=true \
-    --set effects.light_leak.gain=2.0 \
+    --set effects.light_leak.exposure_ev=0.75 \
     --set 'effects.light_leak.tint=[1.0,0.26,0.05]' \
-    --set 'effects.light_leak.position=[-0.98,0.0]' \
-    --set effects.light_leak.angle_deg=90 \
-    --set effects.light_leak.width=0.50 \
-    --set effects.light_leak.spread=0.16 \
-    --set effects.light_leak.texture_amount=0.45
+    --set effects.light_leak.position=0.0 \
+    --set effects.light_leak.angle_deg=0 \
+    --set effects.light_leak.width=0.67 \
+    --set effects.light_leak.spread=0.35 \
+    --set effects.light_leak.texture_amount=0.45 \
+    --set effects.light_leak.texture_scale=0.08
 ```
 
 ### Tone & Color

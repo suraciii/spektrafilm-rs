@@ -415,45 +415,49 @@ pub(crate) fn halation_from_json_value(
     })
 }
 
-/// RGB light leak: a tinted spill added in linear working RGB from a
-/// frame-relative aperture band.
-/// The frame-relative geometry is independent of film light-leak millimetres.
-/// A leak is light entering through a gap on the camera edge. The default is a
-/// vertical glow entering from the left edge: a narrow hot core at the frame
-/// edge, a broad red/orange shoulder inward, and irregular intensity along the
-/// height. Gain is the leak exposure: low values stay red/orange, and high
-/// values burn the core to white while the shoulder keeps its tint. The product
-/// value is an attractive accidental light, not a catalog of camera-fault
-/// looks.
+/// RGB light leak: a tinted spill added in linear working RGB from an aperture
+/// on the frame perimeter.
+///
+/// The geometry mirrors the Film camera leak's aperture contract: `position`
+/// runs clockwise around the frame perimeter, `width` is the aperture's full
+/// length along the edge, `spread` is its inward e-folding length, and
+/// `angle_deg` tilts it relative to the perimeter tangent. The RGB path uses
+/// normalized frame units instead of film millimetres and an appearance tint
+/// instead of spectral records. `exposure_ev` is the leak exposure control:
+/// low values stay red/orange, and high values burn the core toward white.
+/// The product value is an attractive accidental light, not a catalog of
+/// camera-fault looks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LutLightLeakParams {
     #[serde(default)]
     pub active: bool,
-    #[serde(default = "default_light_leak_gain")]
-    pub gain: f64,
+    /// Aperture exposure in stops over the RGB appearance reference. Zero is
+    /// an exact bypass.
+    #[serde(default = "default_light_leak_exposure_ev")]
+    pub exposure_ev: f64,
     #[serde(default = "default_light_leak_tint")]
     pub tint: [f64; 3],
-    /// Aperture center in normalized frame coordinates; `[-1, 1]` is the frame.
+    /// Aperture center around the frame perimeter, `[0, 1)`, measured
+    /// clockwise from the top-left corner.
     #[serde(default = "default_light_leak_position")]
-    pub position: [f64; 2],
-    /// Aperture axis in degrees; `0` runs along the top edge, `90` down an edge.
+    pub position: f64,
+    /// Aperture tilt relative to the perimeter tangent, in degrees.
     #[serde(default = "default_light_leak_angle")]
     pub angle_deg: f64,
-    /// Half-length of the aperture along its axis in normalized frame units.
-    /// Use a value at or above the frame half-height for a full-edge band.
+    /// Full aperture length along the perimeter in normalized frame units.
+    /// A value at or above the frame edge length runs past both corners.
     #[serde(default = "default_light_leak_width")]
     pub width: f64,
-    /// Half-width of the band across its axis in normalized frame units.
-    /// The profile is a Gaussian falloff with no hard cutoff, negligible by
-    /// two and a half spreads. Texture also roughens this width along the
-    /// band without applying a broad symmetric taper.
+    /// Inward e-folding length in normalized frame units. The profile is a
+    /// Gaussian falloff with no hard cutoff.
     #[serde(default = "default_light_leak_spread")]
     pub spread: f64,
-    /// Strength of the seeded structure. It drives fine streaks, edge
-    /// roughness, and slow intensity variation; zero leaves a smooth glow.
+    /// Strength of the seeded fine structure; zero leaves a smooth glow.
     #[serde(default = "default_light_leak_texture_amount")]
     pub texture_amount: f64,
+    /// Spatial scale of the texture in normalized frame units. Larger values
+    /// produce broader streaks.
     #[serde(default = "default_light_leak_texture_scale")]
     pub texture_scale: f64,
     #[serde(default)]
@@ -469,44 +473,48 @@ const LEAK_SHOULDER_SCALE: f64 = 0.48;
 /// Hot-core e-folding length as a fraction of the warm shoulder spread.
 const LEAK_CORE_RATIO: f64 = 0.55;
 /// Core exposure range over which the warm tint burns toward white.
-const LEAK_BURN_START: f64 = 0.7;
-const LEAK_BURN_END: f64 = 1.7;
-/// One broad hot region along the aperture. It keeps the burn from becoming a
-/// uniform white column while avoiding random low-frequency lobes.
-const LEAK_HOTSPOT_CENTER: f64 = 0.08;
-const LEAK_HOTSPOT_WIDTH: f64 = 0.22;
-const LEAK_HOTSPOT_FLOOR: f64 = 0.22;
+const LEAK_BURN_START: f64 = 1.2;
+const LEAK_BURN_END: f64 = 2.4;
+// One smooth hotspot along the aperture keeps a strong leak from burning a
+// uniform white bar: the core peaks near the aperture center and falls off
+// toward both ends. The shoulder stays broad and continuous.
+const LEAK_HOTSPOT_CENTER: f64 = 0.05;
+const LEAK_HOTSPOT_WIDTH: f64 = 0.55;
+const LEAK_HOTSPOT_FLOOR: f64 = 0.12;
+// The core stays orange below the burn range; this boost gives it a readable
+// highlight instead of a flat shoulder-only band.
+const LEAK_CORE_BOOST: f64 = 0.35;
 
-fn default_light_leak_gain() -> f64 {
-    2.0
+fn default_light_leak_exposure_ev() -> f64 {
+    0.75
 }
 fn default_light_leak_tint() -> [f64; 3] {
     [1.0, 0.26, 0.05]
 }
-fn default_light_leak_position() -> [f64; 2] {
-    [-0.98, 0.0]
+fn default_light_leak_position() -> f64 {
+    0.0
 }
 fn default_light_leak_angle() -> f64 {
-    90.0
+    0.0
 }
 fn default_light_leak_width() -> f64 {
-    0.50
+    0.67
 }
 fn default_light_leak_spread() -> f64 {
-    0.16
+    0.35
 }
 fn default_light_leak_texture_amount() -> f64 {
     0.45
 }
 fn default_light_leak_texture_scale() -> f64 {
-    3.0
+    0.08
 }
 
 impl Default for LutLightLeakParams {
     fn default() -> Self {
         Self {
             active: false,
-            gain: default_light_leak_gain(),
+            exposure_ev: default_light_leak_exposure_ev(),
             tint: default_light_leak_tint(),
             position: default_light_leak_position(),
             angle_deg: default_light_leak_angle(),
@@ -521,13 +529,14 @@ impl Default for LutLightLeakParams {
 
 impl LutLightLeakParams {
     /// Inactive values remain stored; active controls must be finite and
-    /// within the public domain. A zero gain or tint is a valid bypass.
+    /// within the public domain. A zero exposure or tint is a valid bypass.
     pub fn validate(&self, prefix: &str) -> Result<(), String> {
         if !self.active {
             return Ok(());
         }
         for (name, value) in [
-            ("gain", self.gain),
+            ("exposure_ev", self.exposure_ev),
+            ("position", self.position),
             ("angle_deg", self.angle_deg),
             ("width", self.width),
             ("spread", self.spread),
@@ -538,8 +547,11 @@ impl LutLightLeakParams {
                 return Err(format!("{prefix}.{name} must be finite"));
             }
         }
-        if self.gain < 0.0 || self.gain > 8.0 {
-            return Err(format!("{prefix}.gain must be between 0 and 8"));
+        if !(0.0..=8.0).contains(&self.exposure_ev) {
+            return Err(format!("{prefix}.exposure_ev must be between 0 and 8"));
+        }
+        if !(0.0..=1.0).contains(&self.position) {
+            return Err(format!("{prefix}.position must be between 0 and 1"));
         }
         if self
             .tint
@@ -547,15 +559,6 @@ impl LutLightLeakParams {
             .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
         {
             return Err(format!("{prefix}.tint components must be between 0 and 1"));
-        }
-        if self
-            .position
-            .iter()
-            .any(|value| !value.is_finite() || !(-1.0..=1.0).contains(value))
-        {
-            return Err(format!(
-                "{prefix}.position components must be between -1 and 1"
-            ));
         }
         if self.width <= 0.0 || self.width > 4.0 {
             return Err(format!("{prefix}.width must be in (0, 4]"));
@@ -572,9 +575,9 @@ impl LutLightLeakParams {
         Ok(())
     }
 
-    /// Inactive, zero gain, or all-zero tint is an exact bypass.
+    /// Inactive, zero exposure, or all-zero tint is an exact bypass.
     pub fn is_active(&self) -> bool {
-        self.active && self.gain > 0.0 && self.tint.iter().any(|value| *value > 0.0)
+        self.active && self.exposure_ev > 0.0 && self.tint.iter().any(|value| *value > 0.0)
     }
 }
 
@@ -1608,9 +1611,9 @@ impl LutLook {
             if self.light_leak_is_active() {
                 let leak = &self.params.light_leak;
                 let params = spektrafilm_backend::LutLightLeakGpuParams {
-                    gain: leak.gain as f32,
+                    gain: 2.0_f32.powf(leak.exposure_ev as f32),
                     tint: leak.tint.map(|value| value as f32),
-                    position: leak.position.map(|value| value as f32),
+                    position: leak.position as f32,
                     angle_deg: leak.angle_deg as f32,
                     width: leak.width as f32,
                     spread: leak.spread as f32,
@@ -1813,10 +1816,31 @@ fn smoothstep(edge0: f64, edge1: f64, value: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Seeded structure along the band. The first value roughens the visible
-/// width without a broad central taper; the second varies the additive
-/// intensity. Both are sampled in the band's own frame, so the structure
-/// follows the same gesture as the leak.
+/// Walk the normalized frame perimeter clockwise from the top-left corner,
+/// returning the aperture center and the perimeter tangent there.
+fn rgb_perimeter_point(aspect: f64, position: f64) -> ([f64; 2], [f64; 2]) {
+    let w = 2.0 * aspect;
+    let h = 2.0;
+    let perimeter = 2.0 * (w + h);
+    let mut d = position.rem_euclid(1.0) * perimeter;
+    if d < w {
+        ([-aspect + d, -1.0], [1.0, 0.0])
+    } else {
+        d -= w;
+        if d < h {
+            ([aspect, -1.0 + d], [0.0, 1.0])
+        } else {
+            d -= h;
+            if d < w {
+                ([aspect - d, 1.0], [-1.0, 0.0])
+            } else {
+                d -= w;
+                ([-aspect, 1.0 - d], [0.0, -1.0])
+            }
+        }
+    }
+}
+
 #[inline]
 fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf {
     if !leak.is_active() || image.width == 0 || image.height == 0 {
@@ -1825,14 +1849,18 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
     let width = image.width as f64;
     let height = image.height as f64;
     let aspect = width / height;
+    let (center, tangent) = rgb_perimeter_point(aspect, leak.position);
     let angle = leak.angle_deg.to_radians();
     let (sin_angle, cos_angle) = angle.sin_cos();
-    let position = [leak.position[0] * aspect, leak.position[1]];
-    let direction = [cos_angle, sin_angle];
-    let half = leak.width;
+    let direction = [
+        tangent[0] * cos_angle - tangent[1] * sin_angle,
+        tangent[0] * sin_angle + tangent[1] * cos_angle,
+    ];
+    let exposure_gain = 2.0_f64.powf(leak.exposure_ev);
+    let half = leak.width * 0.5;
     let spread = leak.spread.max(f64::EPSILON);
     let texture = leak.texture_amount > 0.0 && leak.texture_scale > 0.0;
-    let texture_scale = 0.25 / leak.texture_scale.max(f64::EPSILON);
+    let texture_scale = leak.texture_scale.max(f64::EPSILON);
     let seed = leak.seed as u32;
     let mut out = image.clone();
     let out_width = image.width as usize;
@@ -1841,8 +1869,8 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         let y = (index / out_width) as f64;
         let frame_x = (2.0 * (x + 0.5) / width - 1.0) * aspect;
         let frame_y = 2.0 * (y + 0.5) / height - 1.0;
-        let dx = frame_x - position[0];
-        let dy = frame_y - position[1];
+        let dx = frame_x - center[0];
+        let dy = frame_y - center[1];
         let along = dx * direction[0] + dy * direction[1];
         let across = -dx * direction[1] + dy * direction[0];
         let closest = along.clamp(-half, half);
@@ -1851,7 +1879,14 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         let distance = (edge_x * edge_x + edge_y * edge_y).sqrt();
         let q = distance / spread;
         let shoulder = (-q * q).exp();
-        let core = (-(distance / (spread * LEAK_CORE_RATIO)).powi(2)).exp();
+        let aperture_t = if half > 0.0 {
+            (along / half).clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        let hotspot = (-((aperture_t - LEAK_HOTSPOT_CENTER) / LEAK_HOTSPOT_WIDTH).powi(2)).exp();
+        let core = (-(distance / (spread * LEAK_CORE_RATIO)).powi(2)).exp()
+            * (LEAK_HOTSPOT_FLOOR + (1.0 - LEAK_HOTSPOT_FLOOR) * hotspot);
         let modulation = if texture {
             let streaks = spektrafilm_model::light_leak::streak_noise(
                 (along / (texture_scale * 3.0)) as f32,
@@ -1862,16 +1897,13 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         } else {
             1.0
         };
-        let amplitude = leak.gain * LEAK_SHOULDER_SCALE * shoulder * modulation;
-        let hotspot = (-((along - LEAK_HOTSPOT_CENTER) / LEAK_HOTSPOT_WIDTH).powi(2)).exp();
-        let core_amplitude = leak.gain
-            * core
-            * modulation
-            * (LEAK_HOTSPOT_FLOOR + (1.0 - LEAK_HOTSPOT_FLOOR) * hotspot);
+        let amplitude = exposure_gain * LEAK_SHOULDER_SCALE * shoulder * modulation;
+        let core_amplitude = exposure_gain * core * modulation;
         let burn = smoothstep(LEAK_BURN_START, LEAK_BURN_END, core_amplitude);
         for channel in 0..3 {
-            let added = amplitude * leak.tint[channel]
-                + core_amplitude * (LEAK_HOT_TINT[channel] - leak.tint[channel]) * burn;
+            let core_orange = core_amplitude * LEAK_CORE_BOOST * (1.0 - burn) * leak.tint[channel];
+            let core_white = core_amplitude * (LEAK_HOT_TINT[channel] - leak.tint[channel]) * burn;
+            let added = amplitude * leak.tint[channel] + core_orange + core_white;
             pixel[channel] = from_f64(to_f64(pixel[channel]) + added);
         }
     });
@@ -2344,7 +2376,7 @@ mod tests {
     }
 
     #[test]
-    fn rgb_light_leak_inactive_zero_gain_and_zero_tint_are_exact_bypasses() {
+    fn rgb_light_leak_inactive_zero_exposure_and_zero_tint_are_exact_bypasses() {
         let image = ImageBuf::from_data(
             5,
             3,
@@ -2356,9 +2388,9 @@ mod tests {
             active: true,
             ..LutLightLeakParams::default()
         };
-        params.gain = 0.0;
+        params.exposure_ev = 0.0;
         assert_eq!(apply_rgb_light_leak(&image, &params).data, image.data);
-        params.gain = 1.0;
+        params.exposure_ev = 1.0;
         params.tint = [0.0; 3];
         assert_eq!(apply_rgb_light_leak(&image, &params).data, image.data);
         params.tint = [1.0, 0.5, 0.2];
@@ -2367,21 +2399,66 @@ mod tests {
     }
 
     #[test]
-    fn rgb_light_leak_generic_defaults_are_a_warm_left_edge_burn() {
+    fn rgb_light_leak_generic_defaults_are_a_warm_top_left_corner() {
         let params = LutLightLeakParams::default();
         assert!(!params.active);
-        assert_eq!(params.gain, 2.0);
+        assert_eq!(params.exposure_ev, 0.75);
         assert_eq!(params.tint, [1.0, 0.26, 0.05]);
-        assert_eq!(params.position, [-0.98, 0.0]);
-        assert_eq!(params.angle_deg, 90.0);
-        assert_eq!(params.width, 0.50);
-        assert_eq!(params.spread, 0.16);
+        assert_eq!(params.position, 0.0);
+        assert_eq!(params.angle_deg, 0.0);
+        assert_eq!(params.width, 0.67);
+        assert_eq!(params.spread, 0.35);
         assert_eq!(params.texture_amount, 0.45);
-        assert_eq!(params.texture_scale, 3.0);
+        assert_eq!(params.texture_scale, 0.08);
     }
 
     #[test]
-    fn rgb_light_leak_default_is_a_vertical_left_edge_burn() {
+    fn rgb_light_leak_position_walks_the_frame_perimeter() {
+        let image = ImageBuf::from_data(101, 67, vec![from_f64(0.0); 101 * 67 * 3]);
+        let render = |position| {
+            apply_rgb_light_leak(
+                &image,
+                &LutLightLeakParams {
+                    active: true,
+                    exposure_ev: 0.5,
+                    position,
+                    width: 1.0,
+                    spread: 0.12,
+                    texture_amount: 0.0,
+                    texture_scale: 0.0,
+                    ..LutLightLeakParams::default()
+                },
+            )
+        };
+        let shape = |rendered: &ImageBuf| {
+            let mut rows = 0;
+            let mut columns = 0;
+            for y in 0..67 {
+                if (0..101).any(|x| to_f64(rendered.get(x, y)[0]) > 1.0e-3) {
+                    rows += 1;
+                }
+            }
+            for x in 0..101 {
+                if (0..67).any(|y| to_f64(rendered.get(x, y)[0]) > 1.0e-3) {
+                    columns += 1;
+                }
+            }
+            (rows, columns)
+        };
+        let (top_rows, top_columns) = shape(&render(0.15));
+        let (left_rows, left_columns) = shape(&render(0.90));
+        assert!(
+            top_rows < 20 && top_columns > 45,
+            "position 0.15 must place a wide aperture on the top edge: rows {top_rows}, columns {top_columns}"
+        );
+        assert!(
+            left_rows > 50 && left_columns < 25,
+            "position 0.90 must place a tall aperture on the left edge: rows {left_rows}, columns {left_columns}"
+        );
+    }
+
+    #[test]
+    fn rgb_light_leak_default_is_a_warm_top_left_corner() {
         let params = LutLightLeakParams {
             active: true,
             ..LutLightLeakParams::default()
@@ -2390,6 +2467,7 @@ mod tests {
         let rendered = apply_rgb_light_leak(&image, &params);
         let mut changed = 0usize;
         let mut changed_right = 0usize;
+        let mut changed_bottom = 0usize;
         let mut rows = [false; 67];
         let mut columns = [false; 101];
         for y in 0..67 {
@@ -2401,6 +2479,9 @@ mod tests {
                     if x >= 50 {
                         changed_right += 1;
                     }
+                    if y >= 34 {
+                        changed_bottom += 1;
+                    }
                 }
             }
         }
@@ -2410,22 +2491,23 @@ mod tests {
             "the default leak fogged {changed_right} of {changed} changed pixels in the opposite half"
         );
         assert!(
-            changed * 3 < 101 * 67,
+            changed_bottom * 20 < changed,
+            "the default leak fogged {changed_bottom} of {changed} changed pixels below the middle"
+        );
+        assert!(
+            changed * 2 < 101 * 67,
             "the default leak covered {changed} of {} pixels",
             101 * 67
         );
-        assert!(
-            rows.iter().filter(|hit| **hit).count() > 50,
-            "the default glow must run down the frame, not sit in one spot"
-        );
+        let changed_rows = rows.iter().filter(|hit| **hit).count();
         let changed_columns = columns.iter().filter(|hit| **hit).count();
         assert!(
-            (3..=30).contains(&changed_columns),
-            "the default glow should be a vertical edge burn, not a thin line or a wash; got {changed_columns} columns"
+            changed_rows < 45 && changed_columns < 80,
+            "the default glow must be a corner aperture, not a full-edge bar: rows {changed_rows}, columns {changed_columns}"
         );
         assert!(
-            columns[..3].iter().any(|hit| *hit),
-            "the default glow must start at the frame edge, not float inside it"
+            rows[..3].iter().any(|hit| *hit) && columns[..3].iter().any(|hit| *hit),
+            "the default glow must start at the top-left frame corner, not float inside it"
         );
         let mut max_min = 0.0_f64;
         for y in 0..67 {
@@ -2435,10 +2517,10 @@ mod tests {
             }
         }
         assert!(
-            max_min > 0.5,
-            "the default must contain a hot core that lifts all channels: max min {max_min}"
+            max_min < 0.5,
+            "the default must stay orange, not burn a neutral white core: max min {max_min}"
         );
-        let shoulder = rendered.get(20, 33);
+        let shoulder = rendered.get(20, 20);
         assert!(
             to_f64(shoulder[0]) > to_f64(shoulder[1]) && to_f64(shoulder[1]) > to_f64(shoulder[2]),
             "the shoulder must stay warm, not turn neutral: {shoulder:?}"
@@ -2452,7 +2534,10 @@ mod tests {
             &image,
             &LutLightLeakParams {
                 active: true,
-                gain: 3.0,
+                exposure_ev: 1.5,
+                position: 0.90,
+                width: 0.9,
+                spread: 0.30,
                 ..LutLightLeakParams::default()
             },
         );
@@ -2460,7 +2545,10 @@ mod tests {
             &image,
             &LutLightLeakParams {
                 active: true,
-                gain: 3.0,
+                exposure_ev: 1.5,
+                position: 0.90,
+                width: 0.9,
+                spread: 0.30,
                 texture_amount: 0.0,
                 ..LutLightLeakParams::default()
             },
@@ -2500,19 +2588,20 @@ mod tests {
             "texture must not reshape the band into macro lobes: correlation {correlation}"
         );
         assert!(
-            max_row_delta < 0.08,
+            max_row_delta < 0.10,
             "texture must stay fine-grained, not carve large row-scale blobs: max row delta {max_row_delta}"
         );
     }
 
     #[test]
-    fn rgb_light_leak_gain_burns_the_core_from_orange_to_white() {
+    fn rgb_light_leak_exposure_burns_the_core_from_orange_to_white() {
         let image = ImageBuf::from_data(101, 67, vec![from_f64(0.0); 101 * 67 * 3]);
         let low = apply_rgb_light_leak(
             &image,
             &LutLightLeakParams {
                 active: true,
-                gain: 0.7,
+                exposure_ev: 0.25,
+                position: 0.90,
                 ..LutLightLeakParams::default()
             },
         )
@@ -2527,7 +2616,8 @@ mod tests {
             &image,
             &LutLightLeakParams {
                 active: true,
-                gain: 4.0,
+                exposure_ev: 2.0,
+                position: 0.90,
                 ..LutLightLeakParams::default()
             },
         )
@@ -2536,12 +2626,27 @@ mod tests {
             high.iter().all(|value| to_f64(*value) > 1.0),
             "a full exposure must burn the core to white: {high:?}"
         );
+        let high_end = apply_rgb_light_leak(
+            &image,
+            &LutLightLeakParams {
+                active: true,
+                exposure_ev: 2.0,
+                position: 0.90,
+                ..LutLightLeakParams::default()
+            },
+        )
+        .get(0, 1);
+        assert!(
+            high_end.iter().any(|value| to_f64(*value) < 0.5),
+            "the high-exposure white core must stay localized, not turn the whole edge into a white bar: {high_end:?}"
+        );
     }
 
     #[test]
     fn rgb_light_leak_zero_texture_fades_smoothly_from_the_left_edge() {
         let params = LutLightLeakParams {
             active: true,
+            position: 0.90,
             texture_amount: 0.0,
             texture_scale: 0.0,
             ..LutLightLeakParams::default()
@@ -2552,7 +2657,7 @@ mod tests {
         assert!(row[0] > 1.0e-3, "the smooth glow must add light");
         for pair in row.windows(2) {
             assert!(
-                pair[1] <= pair[0] * 1.001 + 1.0e-9,
+                pair[1] <= pair[0] * 1.05 + 1.0e-9,
                 "zero texture must fade away from the edge without bright bands: {pair:?}"
             );
         }
@@ -2568,9 +2673,9 @@ mod tests {
     fn rgb_light_leak_is_compact_tinted_and_additive() {
         let params = LutLightLeakParams {
             active: true,
-            gain: 1.0,
+            exposure_ev: 0.25,
             tint: [1.0, 0.5, 0.25],
-            position: [-0.78, 0.0],
+            position: 0.90,
             angle_deg: 0.0,
             width: 0.2,
             spread: 0.25,
@@ -2597,15 +2702,15 @@ mod tests {
             ..LutLightLeakParams::default()
         };
         assert!(params.validate("effects.light_leak").is_ok());
-        params.gain = -1.0;
+        params.exposure_ev = 9.0;
         assert!(params.validate("effects.light_leak").is_err());
-        params.gain = 1.0;
+        params.exposure_ev = 1.0;
         params.width = 0.0;
         assert!(params.validate("effects.light_leak").is_err());
-        params.width = 0.35;
-        params.position[0] = 2.0;
+        params.width = 1.0;
+        params.position = 2.0;
         assert!(params.validate("effects.light_leak").is_err());
-        params.position[0] = 0.0;
+        params.position = 0.5;
         params.tint[1] = 2.0;
         assert!(params.validate("effects.light_leak").is_err());
     }
@@ -2615,14 +2720,14 @@ mod tests {
         let gpu = spektrafilm_gpu::test_support::explicit_adapter();
         let leak = LutLightLeakParams {
             active: true,
-            gain: 3.0,
+            exposure_ev: 1.5,
             tint: [1.0, 0.55, 0.2],
-            position: [-0.6, 0.3],
+            position: 0.90,
             angle_deg: 23.0,
-            width: 0.3,
+            width: 1.0,
             spread: 0.5,
             texture_amount: 0.35,
-            texture_scale: 2.5,
+            texture_scale: 0.15,
             seed: 17,
         };
         let mut data = Vec::with_capacity(41 * 23 * 3);
@@ -2640,9 +2745,9 @@ mod tests {
             .lut_light_leak(
                 &image,
                 &spektrafilm_backend::LutLightLeakGpuParams {
-                    gain: leak.gain as f32,
+                    gain: 2.0_f32.powf(leak.exposure_ev as f32),
                     tint: leak.tint.map(|value| value as f32),
-                    position: leak.position.map(|value| value as f32),
+                    position: leak.position as f32,
                     angle_deg: leak.angle_deg as f32,
                     width: leak.width as f32,
                     spread: leak.spread as f32,

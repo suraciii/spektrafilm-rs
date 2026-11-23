@@ -1131,85 +1131,74 @@ fn effects_controls(
         );
         *changed |= crate::controls::param_numeric(
             ui,
-            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_gain"),
-            &mut effects.light_leak.gain,
-            "effects.light_leak.gain",
-            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_gain_help"),
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_exposure"),
+            &mut effects.light_leak.exposure_ev,
+            "effects.light_leak.exposure_ev",
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_exposure_help"),
         );
-        // The visible thickness across the edge is `spread`; the sweep along
-        // the edge is `width`. Label them for what the user sees so the width
-        // control cannot shorten a full-height band instead of widening it.
+        *changed |= crate::controls::param_numeric(
+            ui,
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_position"),
+            &mut effects.light_leak.position,
+            "effects.light_leak.position",
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_position_help"),
+        );
         *changed |= crate::controls::param_numeric(
             ui,
             &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_width"),
-            &mut effects.light_leak.spread,
-            "effects.light_leak.spread",
+            &mut effects.light_leak.width,
+            "effects.light_leak.width",
             &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_width_help"),
         );
         *changed |= crate::controls::param_numeric(
             ui,
-            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_length"),
-            &mut effects.light_leak.width,
-            "effects.light_leak.width",
-            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_length_help"),
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_spread"),
+            &mut effects.light_leak.spread,
+            "effects.light_leak.spread",
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_spread_help"),
         );
-        egui::CollapsingHeader::new(crate::i18n::text(
-            ui.ctx(),
-            "surfaces.lut.light_leak_advanced",
-        ))
-        .id_salt("effects-light-leak-advanced")
-        .default_open(false)
-        .show(ui, |ui| {
-            *changed |= crate::controls::param_tuple(
-                ui,
-                &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_position"),
-                &mut effects.light_leak.position,
-                "effects.light_leak.position",
-                &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_position_help"),
-            );
-            *changed |= crate::controls::param_numeric(
-                ui,
-                &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_angle"),
-                &mut effects.light_leak.angle_deg,
-                "effects.light_leak.angle_deg",
-                &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_angle_help"),
-            );
-            *changed |= crate::controls::param_tuple(
-                ui,
-                &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_tint"),
-                &mut effects.light_leak.tint,
-                "effects.light_leak.tint",
-                &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_tint_help"),
-            );
-            *changed |= crate::controls::param_numeric(
-                ui,
-                &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_texture"),
-                &mut effects.light_leak.texture_amount,
-                "effects.light_leak.texture_amount",
-                &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_texture_help"),
-            );
-            *changed |= crate::controls::param_numeric(
-                ui,
-                &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_texture_scale"),
-                &mut effects.light_leak.texture_scale,
-                "effects.light_leak.texture_scale",
-                &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_texture_scale_help"),
-            );
-            *changed |= ui
-                .add(
-                    egui::DragValue::new(&mut effects.light_leak.seed)
-                        .speed(1.0)
-                        .prefix(format!(
-                            "{} ",
-                            crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_seed")
-                        )),
-                )
-                .on_hover_text(crate::i18n::text(
-                    ui.ctx(),
-                    "surfaces.lut.light_leak_seed_help",
-                ))
-                .changed();
-        });
+        *changed |= crate::controls::param_numeric(
+            ui,
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_angle"),
+            &mut effects.light_leak.angle_deg,
+            "effects.light_leak.angle_deg",
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_angle_help"),
+        );
+        *changed |= crate::controls::param_tuple(
+            ui,
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_tint"),
+            &mut effects.light_leak.tint,
+            "effects.light_leak.tint",
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_tint_help"),
+        );
+        *changed |= crate::controls::param_numeric(
+            ui,
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_texture"),
+            &mut effects.light_leak.texture_amount,
+            "effects.light_leak.texture_amount",
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_texture_help"),
+        );
+        *changed |= crate::controls::param_numeric(
+            ui,
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_texture_scale"),
+            &mut effects.light_leak.texture_scale,
+            "effects.light_leak.texture_scale",
+            &crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_texture_scale_help"),
+        );
+        *changed |= ui
+            .add(
+                egui::DragValue::new(&mut effects.light_leak.seed)
+                    .speed(1.0)
+                    .prefix(format!(
+                        "{} ",
+                        crate::i18n::text(ui.ctx(), "surfaces.lut.light_leak_seed")
+                    )),
+            )
+            .on_hover_text(crate::i18n::text(
+                ui.ctx(),
+                "surfaces.lut.light_leak_seed_help",
+            ))
+            .changed();
     }
     *changed |= ui
         .checkbox(

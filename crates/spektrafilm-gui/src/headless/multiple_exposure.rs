@@ -104,18 +104,24 @@ fn multiple_exposure_panel_composes_preview_and_scan() {
     assert!(h.state().params.effects.as_ref().unwrap().light_leak.active);
     let leaked = preview(h);
     assert_ne!(rgb.data, leaked.data);
-    // The visible width is the band thickness (`spread`), not its sweep
-    // along the edge (`width`). The length row owns the sweep.
-    reveal_control(h, "effects.light_leak.spread");
-    edit(h, "Leak width", "0.25");
+    reveal_control(h, "effects.light_leak.exposure_ev");
+    edit(h, "Leak exposure ev", "1.5");
     let leak = &h.state().params.effects.as_ref().unwrap().light_leak;
-    assert!((leak.spread - 0.25).abs() < 1e-3, "spread {}", leak.spread);
-    assert!((leak.width - 0.50).abs() < 1e-3, "width {}", leak.width);
+    assert!(
+        (leak.exposure_ev - 1.5).abs() < 1e-3,
+        "exposure {}",
+        leak.exposure_ev
+    );
     reveal_control(h, "effects.light_leak.width");
-    edit(h, "Leak length", "1.2");
+    edit(h, "Leak width", "0.75");
     let leak = &h.state().params.effects.as_ref().unwrap().light_leak;
-    assert!((leak.width - 1.2).abs() < 1e-3, "width {}", leak.width);
-    assert!((leak.spread - 0.25).abs() < 1e-3, "spread {}", leak.spread);
+    assert!((leak.width - 0.75).abs() < 1e-3, "width {}", leak.width);
+    assert!((leak.spread - 0.35).abs() < 1e-3, "spread {}", leak.spread);
+    reveal_control(h, "effects.light_leak.spread");
+    edit(h, "Leak spread", "0.30");
+    let leak = &h.state().params.effects.as_ref().unwrap().light_leak;
+    assert!((leak.spread - 0.30).abs() < 1e-3, "spread {}", leak.spread);
+    assert!((leak.width - 0.75).abs() < 1e-3, "width {}", leak.width);
     search_controls(h, "");
     navigate_stage(h, controls::Stage::Input);
     reveal_control(h, "action.rotate_cw");
