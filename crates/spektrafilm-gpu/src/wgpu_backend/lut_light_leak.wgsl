@@ -1,9 +1,11 @@
 // RGB light leak: a tinted additive spill from a gap on the frame edge.
 //
-// The field is a band with a flat core and a short feather inward, plus seeded
-// value-noise streaks along the gap. The noise is the same integer lattice used
-// by the Film camera-light-leak field, but the geometry is frame-relative and
-// this stage reads no film data.
+// The field is a wide band with a soft Gaussian core and a short feather
+// inward. Seeded value noise streaks along the gap and slowly varies the band's
+// width and intensity, so the result reads as one irregular edge stain rather
+// than a uniform tube. The noise is the same integer lattice used by the Film
+// camera-light-leak field, but the geometry is frame-relative and this stage
+// reads no film data.
 
 struct Params {
     n: u32,
@@ -79,6 +81,12 @@ fn streak_noise(x: f32, y: f32, seed: u32) -> f32 {
     return sum / norm;
 }
 
+fn low_frequency_band_structure(along: f32, seed: u32) -> vec2<f32> {
+    let width = smoothstep1((streak_noise(along * 1.1, 0.37, seed + 0x9E3779B9u) - 0.2) / 0.6);
+    let intensity = smoothstep1((streak_noise(along * 0.73, 0.73, seed + 0x85EBCA77u) - 0.2) / 0.6);
+    return vec2<f32>(width, intensity);
+}
+
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) grid: vec3<u32>) {
     let index = gid.x + gid.y * grid.x * 256u;
@@ -102,11 +110,21 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let closest = clamp(along, -p.width, p.width);
     let edge = offset - direction * closest;
     let distance = length(edge);
-    let q = distance / max(p.spread, 1.0e-6);
+
+    let texture_on = p.texture_amount > 0.0 && p.texture_scale > 0.0;
+    var width_variation = 0.0;
+    var band_envelope = 1.0;
+    if texture_on {
+        let slow = low_frequency_band_structure(along, p.seed);
+        width_variation = p.texture_amount * 0.65 * (slow.x * 2.0 - 1.0);
+        band_envelope = 1.0 - p.texture_amount * 0.85 * (1.0 - slow.y);
+    }
+    let local_spread = max(p.spread * (1.0 + width_variation), 1.0e-6);
+    let q = distance / local_spread;
     let falloff = exp(-q * q) * (1.0 - smoothstep1((q - 1.0) / 0.5));
 
     var modulation = 1.0;
-    if p.texture_amount > 0.0 && p.texture_scale > 0.0 {
+    if texture_on {
         let texture_scale = 0.25 / p.texture_scale;
         let streaks = streak_noise(
             along / (texture_scale * 3.0),
@@ -116,7 +134,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
         modulation = 1.0 - p.texture_amount + p.texture_amount * streaks;
     }
 
-    let amplitude = p.gain * falloff * modulation;
+    let amplitude = p.gain * falloff * modulation * band_envelope;
     let base = index * 3u;
     pixels[base] = source[base] + amplitude * p.tint_r;
     pixels[base + 1u] = source[base + 1u] + amplitude * p.tint_g;

@@ -156,24 +156,24 @@ spektrafilm describe --module film_render.light_leak
 
 ### RGB light leak
 
-`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. Its default is a full-height vertical overexposed band near the left frame edge, with a white-hot core and an orange-red fringe. `position` places the band center, `angle_deg` turns the band axis (`90` is vertical), `width` is its half-length along the axis, and `spread` is its half-width across the axis with a soft shoulder. The frame is normalized to its aspect ratio; `position` is in `[-1, 1]`, `width` and `spread` are normalized lengths, and `seed` selects deterministic texture. The GUI labels the visible thickness (`spread`) **Leak width** and the axis half-length (`width`) **Leak length**; the CLI keeps the parameter names. Keep `width` at or above the frame half-height for a full-edge band. Zero gain or a zero tint is an exact bypass.
+`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. Its default is a wide vertical overexposed band starting at the left frame edge, with a white-hot core, an orange-red fringe, and slow width and intensity variation along the band. `position` places the band center, `angle_deg` turns the band axis (`90` is vertical), `width` is its half-length along the axis, and `spread` is its half-width across the axis with a soft shoulder. Texture strength also varies the width and intensity slowly along the band; zero leaves a smooth band. The frame is normalized to its aspect ratio; `position` is in `[-1, 1]`, `width` and `spread` are normalized lengths, and `seed` selects deterministic texture. The GUI labels the visible thickness (`spread`) **Leak width** and the axis half-length (`width`) **Leak length**; the CLI keeps the parameter names. Keep `width` at or above the frame half-height for a full-edge band. Zero gain or a zero tint is an exact bypass.
 
 ```bash
 spektrafilm describe --module effects.light_leak
 ```
 
 ```bash
-# The default vertical band, written explicitly
+# The default wide vertical edge band, written explicitly
 ./target/release/spektrafilm process input.png -o leak.tif \
     --lut look.cube \
     --set effects.light_leak.active=true \
     --set effects.light_leak.gain=3.0 \
     --set 'effects.light_leak.tint=[1.0,0.26,0.08]' \
-    --set 'effects.light_leak.position=[-0.55,0.0]' \
+    --set 'effects.light_leak.position=[-0.82,0.0]' \
     --set effects.light_leak.width=2.0 \
-    --set effects.light_leak.spread=0.11 \
+    --set effects.light_leak.spread=0.22 \
     --set effects.light_leak.angle_deg=90 \
-    --set effects.light_leak.texture_amount=0.32
+    --set effects.light_leak.texture_amount=0.40
 ```
 
 ### Tone & Color

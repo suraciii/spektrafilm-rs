@@ -419,10 +419,12 @@ pub(crate) fn halation_from_json_value(
 /// frame-relative aperture band.
 /// The frame-relative geometry is independent of film light-leak millimetres.
 /// A leak is light entering through a gap on the camera edge. The default is a
-/// vertical overexposed band running past both frame edges, with a soft warm
-/// shoulder inward; real edge leaks read as bands and streaks, not as a
-/// centered radial glow. The product value is an attractive accidental light,
-/// not a catalog of camera-fault looks.
+/// wide vertical overexposed band running past both frame edges, with a soft
+/// warm shoulder inward. Its width and intensity vary slowly along the band,
+/// so the edge reads as one accidental stain rather than a uniform tube. Real
+/// edge leaks read as bands and streaks, not as a centered radial glow. The
+/// product value is an attractive accidental light, not a catalog of
+/// camera-fault looks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LutLightLeakParams {
@@ -444,9 +446,13 @@ pub struct LutLightLeakParams {
     pub width: f64,
     /// Half-width of the band across its axis in normalized frame units.
     /// The profile falls softly from the core and is windowed to zero at one
-    /// and a half spreads.
+    /// and a half spreads. Texture also varies this width slowly along the
+    /// band, so the edge is not a constant-width bar.
     #[serde(default = "default_light_leak_spread")]
     pub spread: f64,
+    /// Strength of the seeded structure. It drives both the fine streak
+    /// texture and the low-frequency width and intensity variation; zero
+    /// leaves a smooth band.
     #[serde(default = "default_light_leak_texture_amount")]
     pub texture_amount: f64,
     #[serde(default = "default_light_leak_texture_scale")]
@@ -462,7 +468,7 @@ fn default_light_leak_tint() -> [f64; 3] {
     [1.0, 0.26, 0.08]
 }
 fn default_light_leak_position() -> [f64; 2] {
-    [-0.55, 0.0]
+    [-0.82, 0.0]
 }
 fn default_light_leak_angle() -> f64 {
     90.0
@@ -471,13 +477,13 @@ fn default_light_leak_width() -> f64 {
     2.0
 }
 fn default_light_leak_spread() -> f64 {
-    0.11
+    0.22
 }
 fn default_light_leak_texture_amount() -> f64 {
-    0.32
+    0.40
 }
 fn default_light_leak_texture_scale() -> f64 {
-    5.0
+    3.0
 }
 
 impl Default for LutLightLeakParams {
@@ -1791,6 +1797,32 @@ fn smoothstep(edge0: f64, edge1: f64, value: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// Slow seed-derived structure along the band. The first value varies the
+/// visible width; the second varies the additive intensity. Both are sampled
+/// in the band's own frame, so the stem follows the same gesture as the leak.
+#[inline]
+fn low_frequency_band_structure(along: f64, seed: u32) -> (f64, f64) {
+    let width = smoothstep(
+        0.2,
+        0.8,
+        spektrafilm_model::light_leak::streak_noise(
+            (along * 1.1) as f32,
+            0.37,
+            seed.wrapping_add(0x9E37_79B9),
+        ) as f64,
+    );
+    let intensity = smoothstep(
+        0.2,
+        0.8,
+        spektrafilm_model::light_leak::streak_noise(
+            (along * 0.73) as f32,
+            0.73,
+            seed.wrapping_add(0x85EB_CA77),
+        ) as f64,
+    );
+    (width, intensity)
+}
+
 fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf {
     if !leak.is_active() || image.width == 0 || image.height == 0 {
         return image.clone();
@@ -1818,11 +1850,22 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         let dy = frame_y - position[1];
         let along = dx * direction[0] + dy * direction[1];
         let across = -dx * direction[1] + dy * direction[0];
+        let (width_noise, intensity_noise) = if texture {
+            low_frequency_band_structure(along, seed)
+        } else {
+            (0.5, 0.5)
+        };
+        let width_variation = if texture {
+            leak.texture_amount * 0.65 * (width_noise * 2.0 - 1.0)
+        } else {
+            0.0
+        };
+        let local_spread = (spread * (1.0 + width_variation)).max(f64::EPSILON);
         let closest = along.clamp(-half, half);
         let edge_x = dx - closest * direction[0];
         let edge_y = dy - closest * direction[1];
         let distance = (edge_x * edge_x + edge_y * edge_y).sqrt();
-        let q = distance / spread;
+        let q = distance / local_spread;
         let falloff = (-q * q).exp() * (1.0 - smoothstep(1.0, 1.5, q));
         let modulation = if texture {
             let streaks = spektrafilm_model::light_leak::streak_noise(
@@ -1834,7 +1877,12 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         } else {
             1.0
         };
-        let amplitude = leak.gain * falloff * modulation;
+        let band_envelope = if texture {
+            1.0 - leak.texture_amount * 0.85 * (1.0 - intensity_noise)
+        } else {
+            1.0
+        };
+        let amplitude = leak.gain * falloff * modulation * band_envelope;
         for (channel, tint) in pixel.iter_mut().zip(&leak.tint) {
             *channel = from_f64(to_f64(*channel) + amplitude * tint);
         }
@@ -2336,12 +2384,12 @@ mod tests {
         assert!(!params.active);
         assert_eq!(params.gain, 3.0);
         assert_eq!(params.tint, [1.0, 0.26, 0.08]);
-        assert_eq!(params.position, [-0.55, 0.0]);
+        assert_eq!(params.position, [-0.82, 0.0]);
         assert_eq!(params.angle_deg, 90.0);
         assert_eq!(params.width, 2.0);
-        assert_eq!(params.spread, 0.11);
-        assert_eq!(params.texture_amount, 0.32);
-        assert_eq!(params.texture_scale, 5.0);
+        assert_eq!(params.spread, 0.22);
+        assert_eq!(params.texture_amount, 0.40);
+        assert_eq!(params.texture_scale, 3.0);
     }
 
     #[test]
@@ -2356,12 +2404,14 @@ mod tests {
         let mut changed_right = 0usize;
         let mut rows = [false; 67];
         let mut columns = [false; 101];
+        let mut row_widths = [0usize; 67];
         for y in 0..67 {
             for x in 0..101 {
                 if to_f64(rendered.get(x, y)[0]) > 1.0e-3 {
                     changed += 1;
                     rows[y as usize] = true;
                     columns[x as usize] = true;
+                    row_widths[y as usize] += 1;
                     if x >= 50 {
                         changed_right += 1;
                     }
@@ -2374,7 +2424,7 @@ mod tests {
             "the default leak fogged {changed_right} of {changed} changed pixels in the opposite half"
         );
         assert!(
-            changed * 5 < 101 * 67,
+            changed * 4 < 101 * 67,
             "the default leak covered {changed} of {} pixels",
             101 * 67
         );
@@ -2382,9 +2432,51 @@ mod tests {
             rows.iter().filter(|hit| **hit).count() > 60,
             "the default leak must run down the frame, not sit in one corner"
         );
+        let changed_columns = columns.iter().filter(|hit| **hit).count();
         assert!(
-            columns.iter().filter(|hit| **hit).count() < 45,
-            "the default leak must stay a narrow band, not wash the frame"
+            (15..=32).contains(&changed_columns),
+            "the default leak should be a wide band, not a thin stripe or a wash; got {changed_columns} columns"
+        );
+        assert!(
+            columns[..3].iter().any(|hit| *hit),
+            "the default band should start at the frame edge, not float inside it"
+        );
+        let (min_width, max_width) = row_widths
+            .iter()
+            .filter(|width| **width > 0)
+            .fold((usize::MAX, 0usize), |(min, max), width| {
+                (min.min(*width), max.max(*width))
+            });
+        assert!(
+            max_width >= min_width + 2,
+            "the band width should vary along the frame, not stay a uniform tube: {min_width}..{max_width} columns"
+        );
+    }
+
+    #[test]
+    fn rgb_light_leak_zero_texture_keeps_a_smooth_band() {
+        let params = LutLightLeakParams {
+            active: true,
+            texture_amount: 0.0,
+            texture_scale: 0.0,
+            ..LutLightLeakParams::default()
+        };
+        let image = ImageBuf::from_data(101, 67, vec![from_f64(0.0); 101 * 67 * 3]);
+        let rendered = apply_rgb_light_leak(&image, &params);
+        let mut row_widths = [0usize; 67];
+        for y in 0..67 {
+            for x in 0..101 {
+                if to_f64(rendered.get(x, y)[0]) > 1.0e-3 {
+                    row_widths[y as usize] += 1;
+                }
+            }
+        }
+        let min_width = *row_widths.iter().min().unwrap();
+        let max_width = *row_widths.iter().max().unwrap();
+        assert!(min_width > 0, "the smooth band must add light");
+        assert_eq!(
+            min_width, max_width,
+            "zero texture must not vary the band width"
         );
     }
 
