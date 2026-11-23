@@ -19,7 +19,7 @@ Light leak is an aesthetic finishing capability. Its value is to add a plausible
 
 Physical and measured evidence constrains whether the light looks credible. It does not decide the default look.
 
-The default MUST be a wide vertical overexposed band along one frame edge, with a warm visible fringe, that preserves the subject's contrast and black level. The band MUST read as one irregular edge stain: its width and intensity MUST vary slowly along the frame rather than forming a uniform tube.
+The default MUST be a wide vertical overexposed band along one frame edge, with a warm visible fringe, that preserves the subject's contrast and black level. The band MUST read as one irregular edge stain: its edge MUST be roughened and its intensity MUST vary along the frame, rather than forming a uniform tube or a symmetric spindle.
 
 A corner patch, a full-frame wash, an isolated centered blob, a uniform tint, or a visibly periodic texture MUST NOT be the default.
 
@@ -62,7 +62,9 @@ The RGB group MUST provide an active switch, a linear-light gain, a linear RGB t
 
 The RGB geometry MUST be a band segment on or beyond a frame edge with a soft inward shoulder. `width` is the band half-length along its axis, `spread` is its half-width across the axis, and `angle` turns the band direction. A full-edge band uses a `width` at or above the frame half-height so its ends fall outside the frame.
 
-The initial geometry MUST read as a wide vertical overexposed band starting near the left frame edge, running past both frame edges, with a white-hot core and an orange-red fringe. Its texture controls MUST vary the band width and intensity slowly along its length; zero texture MUST leave a smooth band. It MUST preserve the subject and black level.
+The initial geometry MUST read as a wide vertical overexposed band starting near the left frame edge, running past both frame edges, with a white-hot core and an orange-red fringe. Its texture controls MUST roughen the edge and vary the intensity along its length; a broad symmetric taper MUST NOT be the result.
+
+Zero texture MUST leave a smooth, uniform-width band. The leak MUST preserve the subject and black level.
 
 The default MUST NOT use a corner quarter-disc, diagonal plume, lens-like radial glow, centered isolated spill, full-frame fog, or visible periodic pattern.
 

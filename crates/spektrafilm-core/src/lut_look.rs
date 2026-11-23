@@ -420,9 +420,10 @@ pub(crate) fn halation_from_json_value(
 /// The frame-relative geometry is independent of film light-leak millimetres.
 /// A leak is light entering through a gap on the camera edge. The default is a
 /// wide vertical overexposed band running past both frame edges, with a soft
-/// warm shoulder inward. Its width and intensity vary slowly along the band,
-/// so the edge reads as one accidental stain rather than a uniform tube. Real
-/// edge leaks read as bands and streaks, not as a centered radial glow. The
+/// warm shoulder inward. Its edge is irregularly roughened and its intensity
+/// varies along the band, so it reads as one accidental stain rather than a
+/// uniform tube or a symmetric spindle. Real edge leaks read as bands and
+/// streaks, not as a centered radial glow. The
 /// product value is an attractive accidental light, not a catalog of
 /// camera-fault looks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -446,13 +447,12 @@ pub struct LutLightLeakParams {
     pub width: f64,
     /// Half-width of the band across its axis in normalized frame units.
     /// The profile falls softly from the core and is windowed to zero at one
-    /// and a half spreads. Texture also varies this width slowly along the
-    /// band, so the edge is not a constant-width bar.
+    /// and a half spreads. Texture also roughens this width along the band
+    /// without applying a broad symmetric taper.
     #[serde(default = "default_light_leak_spread")]
     pub spread: f64,
-    /// Strength of the seeded structure. It drives both the fine streak
-    /// texture and the low-frequency width and intensity variation; zero
-    /// leaves a smooth band.
+    /// Strength of the seeded structure. It drives fine streaks, edge
+    /// roughness, and slow intensity variation; zero leaves a smooth band.
     #[serde(default = "default_light_leak_texture_amount")]
     pub texture_amount: f64,
     #[serde(default = "default_light_leak_texture_scale")]
@@ -1797,16 +1797,17 @@ fn smoothstep(edge0: f64, edge1: f64, value: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Slow seed-derived structure along the band. The first value varies the
-/// visible width; the second varies the additive intensity. Both are sampled
-/// in the band's own frame, so the stem follows the same gesture as the leak.
+/// Seeded structure along the band. The first value roughens the visible
+/// width without a broad central taper; the second varies the additive
+/// intensity. Both are sampled in the band's own frame, so the structure
+/// follows the same gesture as the leak.
 #[inline]
-fn low_frequency_band_structure(along: f64, seed: u32) -> (f64, f64) {
+fn seeded_band_structure(along: f64, seed: u32) -> (f64, f64) {
     let width = smoothstep(
         0.2,
         0.8,
         spektrafilm_model::light_leak::streak_noise(
-            (along * 1.1) as f32,
+            (along * 3.7) as f32,
             0.37,
             seed.wrapping_add(0x9E37_79B9),
         ) as f64,
@@ -1851,12 +1852,12 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         let along = dx * direction[0] + dy * direction[1];
         let across = -dx * direction[1] + dy * direction[0];
         let (width_noise, intensity_noise) = if texture {
-            low_frequency_band_structure(along, seed)
+            seeded_band_structure(along, seed)
         } else {
             (0.5, 0.5)
         };
         let width_variation = if texture {
-            leak.texture_amount * 0.65 * (width_noise * 2.0 - 1.0)
+            leak.texture_amount * 0.30 * (width_noise * 2.0 - 1.0)
         } else {
             0.0
         };
@@ -2450,6 +2451,13 @@ mod tests {
         assert!(
             max_width >= min_width + 2,
             "the band width should vary along the frame, not stay a uniform tube: {min_width}..{max_width} columns"
+        );
+        let top_sum: usize = row_widths[2..12].iter().sum();
+        let middle_sum: usize = row_widths[28..38].iter().sum();
+        let bottom_sum: usize = row_widths[55..65].iter().sum();
+        assert!(
+            middle_sum * 10 >= top_sum * 9 && middle_sum * 10 >= bottom_sum * 9,
+            "the default band should not narrow into a central spindle: top {top_sum}, middle {middle_sum}, bottom {bottom_sum}"
         );
     }
 

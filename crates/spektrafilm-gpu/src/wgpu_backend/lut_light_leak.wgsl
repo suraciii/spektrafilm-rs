@@ -1,11 +1,11 @@
 // RGB light leak: a tinted additive spill from a gap on the frame edge.
 //
 // The field is a wide band with a soft Gaussian core and a short feather
-// inward. Seeded value noise streaks along the gap and slowly varies the band's
-// width and intensity, so the result reads as one irregular edge stain rather
-// than a uniform tube. The noise is the same integer lattice used by the Film
-// camera-light-leak field, but the geometry is frame-relative and this stage
-// reads no film data.
+// inward. Seeded value noise streaks along the gap, roughens its edge, and
+// slowly varies its intensity, so the result reads as one irregular edge stain
+// rather than a uniform tube or a symmetric spindle. The noise is the same
+// integer lattice used by the Film camera-light-leak field, but the geometry
+// is frame-relative and this stage reads no film data.
 
 struct Params {
     n: u32,
@@ -81,8 +81,8 @@ fn streak_noise(x: f32, y: f32, seed: u32) -> f32 {
     return sum / norm;
 }
 
-fn low_frequency_band_structure(along: f32, seed: u32) -> vec2<f32> {
-    let width = smoothstep1((streak_noise(along * 1.1, 0.37, seed + 0x9E3779B9u) - 0.2) / 0.6);
+fn seeded_band_structure(along: f32, seed: u32) -> vec2<f32> {
+    let width = smoothstep1((streak_noise(along * 3.7, 0.37, seed + 0x9E3779B9u) - 0.2) / 0.6);
     let intensity = smoothstep1((streak_noise(along * 0.73, 0.73, seed + 0x85EBCA77u) - 0.2) / 0.6);
     return vec2<f32>(width, intensity);
 }
@@ -115,8 +115,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     var width_variation = 0.0;
     var band_envelope = 1.0;
     if texture_on {
-        let slow = low_frequency_band_structure(along, p.seed);
-        width_variation = p.texture_amount * 0.65 * (slow.x * 2.0 - 1.0);
+        let slow = seeded_band_structure(along, p.seed);
+        width_variation = p.texture_amount * 0.30 * (slow.x * 2.0 - 1.0);
         band_envelope = 1.0 - p.texture_amount * 0.85 * (1.0 - slow.y);
     }
     let local_spread = max(p.spread * (1.0 + width_variation), 1.0e-6);
