@@ -419,13 +419,13 @@ pub(crate) fn halation_from_json_value(
 /// frame-relative aperture band.
 /// The frame-relative geometry is independent of film light-leak millimetres.
 /// A leak is light entering through a gap on the camera edge. The default is a
-/// wide vertical overexposed band running past both frame edges, with a soft
-/// warm shoulder inward. Its edge is irregularly roughened and its intensity
-/// varies along the band, so it reads as one accidental stain rather than a
-/// uniform tube or a symmetric spindle. Real edge leaks read as bands and
-/// streaks, not as a centered radial glow. The
-/// product value is an attractive accidental light, not a catalog of
-/// camera-fault looks.
+/// warm vertical edge glow anchored to the frame edge, brightest at the edge
+/// and falling inward with a soft shoulder. Its edge is irregularly roughened
+/// and its intensity varies along the band, so it reads as one accidental stain
+/// rather than a clipped white tube or a symmetric spindle. Raising gain can
+/// drive it toward white. Real edge leaks read as bands and streaks, not as a
+/// centered radial glow. The product value is an attractive accidental light,
+/// not a catalog of camera-fault looks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LutLightLeakParams {
@@ -462,13 +462,13 @@ pub struct LutLightLeakParams {
 }
 
 fn default_light_leak_gain() -> f64 {
-    3.0
+    0.7
 }
 fn default_light_leak_tint() -> [f64; 3] {
-    [1.0, 0.26, 0.08]
+    [1.0, 0.45, 0.18]
 }
 fn default_light_leak_position() -> [f64; 2] {
-    [-0.82, 0.0]
+    [-0.98, 0.0]
 }
 fn default_light_leak_angle() -> f64 {
     90.0
@@ -477,10 +477,10 @@ fn default_light_leak_width() -> f64 {
     2.0
 }
 fn default_light_leak_spread() -> f64 {
-    0.22
+    0.16
 }
 fn default_light_leak_texture_amount() -> f64 {
-    0.40
+    0.20
 }
 fn default_light_leak_texture_scale() -> f64 {
     3.0
@@ -2383,13 +2383,13 @@ mod tests {
     fn rgb_light_leak_generic_defaults_are_a_warm_vertical_edge_band() {
         let params = LutLightLeakParams::default();
         assert!(!params.active);
-        assert_eq!(params.gain, 3.0);
-        assert_eq!(params.tint, [1.0, 0.26, 0.08]);
-        assert_eq!(params.position, [-0.82, 0.0]);
+        assert_eq!(params.gain, 0.7);
+        assert_eq!(params.tint, [1.0, 0.45, 0.18]);
+        assert_eq!(params.position, [-0.98, 0.0]);
         assert_eq!(params.angle_deg, 90.0);
         assert_eq!(params.width, 2.0);
-        assert_eq!(params.spread, 0.22);
-        assert_eq!(params.texture_amount, 0.40);
+        assert_eq!(params.spread, 0.16);
+        assert_eq!(params.texture_amount, 0.20);
         assert_eq!(params.texture_scale, 3.0);
     }
 
@@ -2435,8 +2435,8 @@ mod tests {
         );
         let changed_columns = columns.iter().filter(|hit| **hit).count();
         assert!(
-            (15..=32).contains(&changed_columns),
-            "the default leak should be a wide band, not a thin stripe or a wash; got {changed_columns} columns"
+            (6..=24).contains(&changed_columns),
+            "the default leak should be a visible edge band, not a thin stripe or a wash; got {changed_columns} columns"
         );
         assert!(
             columns[..3].iter().any(|hit| *hit),
@@ -2449,8 +2449,8 @@ mod tests {
                 (min.min(*width), max.max(*width))
             });
         assert!(
-            max_width >= min_width + 2,
-            "the band width should vary along the frame, not stay a uniform tube: {min_width}..{max_width} columns"
+            max_width > min_width,
+            "the band edge should vary along the frame, not stay a perfectly straight tube: {min_width}..{max_width} columns"
         );
         let top_sum: usize = row_widths[2..12].iter().sum();
         let middle_sum: usize = row_widths[28..38].iter().sum();

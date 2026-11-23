@@ -1704,7 +1704,7 @@
   "surfaces.lut.diffusion": "扩散",
   "surfaces.lut.rgb_halation": "RGB 光晕",
   "surfaces.lut.rgb_light_leak": "RGB 漏光",
-  "surfaces.lut.rgb_light_leak_hint": "默认是从画框左边缘开始的宽竖直过曝条带，带暖色边缘、粗糙的内边界，并沿条带缓慢变化强度。漏光宽度控制可见厚度，漏光长度控制沿边缘的延伸；长度不小于画幅半高时，条带贯穿上下。",
+  "surfaces.lut.rgb_light_leak_hint": "默认是锚定在画框左边缘的宽暖色边缘光晕，靠边缘最亮、向内柔和衰减，带粗糙内边界并沿条带缓慢变化强度。默认强度不会把核心烧成白色，提高强度可逐渐变白。漏光宽度控制可见厚度，漏光长度控制沿边缘的延伸；长度不小于画幅半高时，条带贯穿上下。",
   "surfaces.lut.light_leak_gain": "漏光强度",
   "surfaces.lut.light_leak_gain_help": "叠加的线性光强度；0 为精确旁路。",
   "surfaces.lut.light_leak_width": "漏光宽度",
