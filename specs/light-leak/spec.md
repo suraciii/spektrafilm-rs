@@ -19,11 +19,11 @@ Light leak is an aesthetic finishing capability. Its value is to add a plausible
 
 Physical and measured evidence constrains whether the light looks credible. It does not decide the default look.
 
-The default MUST be a broad warm glow entering from one frame corner along an edge, brightest near the corner and falling inward softly, that preserves subject contrast and black level.
+The default MUST be a warm vertical glow entering from one frame edge, with a narrow hot core and a softer red-orange shoulder, that preserves subject contrast and black level.
 
-The glow MUST read as light through an edge aperture: its intensity MUST vary along the aperture, rather than forming a clipped white column, a hard-edged bar, a circular patch, or a symmetric spindle.
+The glow MUST read as light burning through an edge aperture. Its intensity MUST vary along the aperture, and its core MUST brighten toward white as leak exposure rises. It MUST NOT form a flat clipped bar, a uniform white column, a circular patch, or a symmetric spindle.
 
-A full-frame wash, an isolated centered blob, a uniform tint, or a visibly periodic texture MUST NOT be the default.
+A full-frame wash, an isolated centered blob, a uniform tint, a hard-edged bar, or a visibly periodic texture MUST NOT be the default.
 
 Diagnostic or deliberately damaged looks MAY remain reachable through explicit controls. They MUST NOT define the default, product sample, or acceptance target.
 
@@ -64,13 +64,15 @@ The RGB group MUST provide an active switch, a linear-light gain, a linear RGB t
 
 The RGB geometry MUST be an aperture segment on or beyond a frame edge with a soft inward shoulder. `width` is the aperture half-length along its axis, `spread` is its half-width across the axis, and `angle` turns the aperture direction. A full-edge band uses a `width` at or above the frame half-height so its ends fall outside the frame.
 
-The initial geometry MUST read as a broad warm glow from a short top-edge aperture at the left corner, with a soft inward falloff and no imposed white column at the default gain.
+The initial geometry MUST read as a vertical burn entering along the left frame edge, brightest within a narrow core and falling inward through a wider orange shoulder. The default MUST NOT impose a uniform white column; only the overexposed core MAY reach white.
 
-Bright detail MAY still reach white where the added light exceeds the display range. Its texture controls MUST roughen the aperture and vary the intensity along its length; a broad symmetric taper MUST NOT be the result.
+The gain MUST be the leak exposure control. At partial exposure the leak MUST remain red-orange; at full exposure its core MUST burn toward white while the shoulder stays warm. The transition MUST be continuous, without a hard threshold or banded step.
+
+Bright detail MAY still reach white where the added light exceeds the display range. Texture controls MUST roughen the aperture, vary the intensity along its length, and break the hot core into uneven segments; a broad symmetric taper or a uniform white bar MUST NOT be the result.
 
 Zero texture MUST leave a smooth glow. The leak MUST preserve the subject and black level.
 
-The default MUST NOT use a circular corner quarter-disc, diagonal plume, lens-like radial glow, centered isolated spill, full-frame fog, or visible periodic pattern.
+The default MUST NOT use a flat white bar, a uniform full-height column of equal brightness, a circular corner quarter-disc, a diagonal plume, a lens-like radial glow, a centered isolated spill, full-frame fog, or a visible periodic pattern.
 
 A zero gain, an inactive group, or an all-zero tint MUST be an exact bypass. Disabling the leak MUST retain its stored values.
 
@@ -101,5 +103,5 @@ A nonfinite value, an invalid geometry, or a value outside its declared domain M
 ## Acceptance
 
 1. Film adds edge-anchored stray exposure after camera optics and before Film Halation; an inactive leak is an exact bypass.
-2. RGB defaults add a broad, soft, warm corner-anchored edge glow that preserves the subject and does not impose a white column, before RGB Halation and the LUT. An inactive or zero-gain leak is an exact bypass and reads no film data.
+2. RGB defaults add a vertical left-edge burn with a narrow hot core and a warm red-orange shoulder before RGB Halation and the LUT; raising gain drives the core toward white while lowering it keeps the leak orange. An inactive or zero-gain leak is an exact bypass and reads no film data.
 3. Multiple exposure applies the active leak per exposure before composition through the method's single GUI owner.

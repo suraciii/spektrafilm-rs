@@ -9,7 +9,7 @@ Real operations of exposure, development, photographic printing, and film digiti
 **Record exposure**: The exposure received by one film or photographic-paper record before development. In a chromogenic material, cyan, magenta, and yellow identify the dye-forming records, not RGB image colors or developed record densities.
 _Avoid_: Receiver capture, record density
 
-**Light leak**: The dual-track aesthetic effect that adds stray edge light to a photograph. Its Film track is camera light leak; its RGB track is a synthetic tinted linear-light appearance spill. The RGB default is a broad warm glow from a short top-edge aperture at the left frame corner. The default prioritizes an attractive, credible leak over reproducing an average camera fault.
+**Light leak**: The dual-track aesthetic effect that adds stray edge light to a photograph. Its Film track is camera light leak; its RGB track is a synthetic tinted linear-light appearance spill. The RGB default is a vertical warm burn along the left frame edge, with a narrow hot core and a wider red-orange shoulder. The default prioritizes an attractive, credible leak over reproducing an average camera fault.
 _Avoid_: Film leak for the RGB model, light-leak overlay
 
 **Camera light leak**: Stray light that reaches a film record during exposure through a seal gap, a door hinge, or a failed light trap. It is an addition to record exposure, so development, in-emulsion scatter, and scanning treat it like image-forming light.

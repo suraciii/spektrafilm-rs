@@ -1,11 +1,11 @@
 // RGB light leak: a tinted additive spill from a gap on the frame edge.
 //
-// The field is a wide band with a soft Gaussian core and a short feather
-// inward. Seeded value noise streaks along the gap, roughens its edge, and
-// slowly varies its intensity, so the result reads as one irregular edge stain
-// rather than a uniform tube or a symmetric spindle. The noise is the same
-// integer lattice used by the Film camera-light-leak field, but the geometry
-// is frame-relative and this stage reads no film data.
+// The field is a wide warm shoulder with a narrower hot core. A seeded slow
+// structure roughens the band, shifts and widens the core, and varies its
+// intensity, so the burn breaks into uneven white segments rather than a
+// uniform tube. The noise is the same integer lattice used by the Film
+// camera-light-leak field, but the geometry is frame-relative and this stage
+// reads no film data.
 
 struct Params {
     n: u32,
@@ -31,6 +31,10 @@ struct Params {
 @group(0) @binding(2) var<storage, read_write> pixels: array<f32>;
 
 const PI: f32 = 3.141592653589793;
+const LEAK_SHOULDER_SCALE: f32 = 0.48;
+const LEAK_CORE_RATIO: f32 = 0.55;
+const LEAK_BURN_START: f32 = 1.0;
+const LEAK_BURN_END: f32 = 2.2;
 
 fn hash2(x: u32, y: u32, seed: u32) -> f32 {
     var h = seed ^ 0x9E3779B9u;
@@ -114,14 +118,27 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let texture_on = p.texture_amount > 0.0 && p.texture_scale > 0.0;
     var width_variation = 0.0;
     var band_envelope = 1.0;
+    var burn_weight = 1.0;
+    var width_noise = 0.5;
     if texture_on {
         let slow = seeded_band_structure(along, p.seed);
-        width_variation = p.texture_amount * 0.30 * (slow.x * 2.0 - 1.0);
-        band_envelope = 1.0 - p.texture_amount * 0.85 * (1.0 - slow.y);
+        width_noise = slow.x;
+        width_variation = p.texture_amount * 0.35 * (slow.x * 2.0 - 1.0);
+        band_envelope = max(1.0 + p.texture_amount * (5.0 * slow.y - 2.5), 0.05);
+        burn_weight = 0.15 + 1.1 * slow.y;
     }
     let local_spread = max(p.spread * (1.0 + width_variation), 1.0e-6);
     let q = distance / local_spread;
-    let falloff = exp(-q * q);
+    let shoulder = exp(-q * q);
+    var core_width = local_spread * LEAK_CORE_RATIO;
+    var core_shift = 0.0;
+    if texture_on {
+        core_width = local_spread * LEAK_CORE_RATIO * (0.55 + 0.9 * width_noise);
+        core_shift = p.texture_amount * 0.40 * (width_noise * 2.0 - 1.0) * local_spread;
+    }
+    let across_axis = vec2<f32>(-direction.y, direction.x);
+    let core_distance = length(edge - across_axis * core_shift);
+    let core = exp(-(core_distance / core_width) * (core_distance / core_width));
 
     var modulation = 1.0;
     if texture_on {
@@ -134,9 +151,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
         modulation = 1.0 - p.texture_amount + p.texture_amount * streaks;
     }
 
-    let amplitude = p.gain * falloff * modulation * band_envelope;
+    let envelope = modulation * band_envelope;
+    let amplitude = p.gain * LEAK_SHOULDER_SCALE * shoulder * envelope;
+    let core_amplitude = p.gain * core * envelope;
+    let burn = smoothstep1(
+        (core_amplitude * burn_weight - LEAK_BURN_START)
+            / (LEAK_BURN_END - LEAK_BURN_START),
+    );
+    let tint = vec3<f32>(p.tint_r, p.tint_g, p.tint_b);
+    let hot = vec3<f32>(1.0, 0.90, 0.75);
     let base = index * 3u;
-    pixels[base] = source[base] + amplitude * p.tint_r;
-    pixels[base + 1u] = source[base + 1u] + amplitude * p.tint_g;
-    pixels[base + 2u] = source[base + 2u] + amplitude * p.tint_b;
+    pixels[base] = source[base] + amplitude * tint.r + core_amplitude * (hot.r - tint.r) * burn;
+    pixels[base + 1u] = source[base + 1u] + amplitude * tint.g + core_amplitude * (hot.g - tint.g) * burn;
+    pixels[base + 2u] = source[base + 2u] + amplitude * tint.b + core_amplitude * (hot.b - tint.b) * burn;
 }

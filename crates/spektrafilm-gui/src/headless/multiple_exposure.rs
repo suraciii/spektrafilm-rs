@@ -110,7 +110,7 @@ fn multiple_exposure_panel_composes_preview_and_scan() {
     edit(h, "Leak width", "0.25");
     let leak = &h.state().params.effects.as_ref().unwrap().light_leak;
     assert!((leak.spread - 0.25).abs() < 1e-3, "spread {}", leak.spread);
-    assert!((leak.width - 0.30).abs() < 1e-3, "width {}", leak.width);
+    assert!((leak.width - 0.45).abs() < 1e-3, "width {}", leak.width);
     reveal_control(h, "effects.light_leak.width");
     edit(h, "Leak length", "1.2");
     let leak = &h.state().params.effects.as_ref().unwrap().light_leak;

@@ -419,13 +419,12 @@ pub(crate) fn halation_from_json_value(
 /// frame-relative aperture band.
 /// The frame-relative geometry is independent of film light-leak millimetres.
 /// A leak is light entering through a gap on the camera edge. The default is a
-/// short top-edge aperture at the left corner: a broad warm glow, brightest
-/// near the corner and falling inward with a soft shoulder. Its edge is
-/// irregularly roughened and its intensity varies along the aperture, so it
-/// reads as light through an edge gap rather than a centered radial blob or a
-/// hard-edged bar. Raising gain can drive bright detail toward white. The
-/// product value is an attractive accidental light, not a catalog of
-/// camera-fault looks.
+/// vertical glow entering from the left edge: a narrow hot core at the frame
+/// edge, a broad red/orange shoulder inward, and irregular intensity along the
+/// height. Gain is the leak exposure: low values stay red/orange, and high
+/// values burn the core to white while the shoulder keeps its tint. The product
+/// value is an attractive accidental light, not a catalog of camera-fault
+/// looks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LutLightLeakParams {
@@ -461,26 +460,38 @@ pub struct LutLightLeakParams {
     pub seed: u64,
 }
 
+/// Tint the leak reaches when its local additive exposure is high enough to
+/// burn the core white. The warm tint remains the shoulder color.
+const LEAK_HOT_TINT: [f64; 3] = [1.0, 0.92, 0.80];
+/// Warm shoulder scale. The narrow core carries more of the exposure so the
+/// edge can burn white without washing the whole band pale.
+const LEAK_SHOULDER_SCALE: f64 = 0.48;
+/// Hot-core e-folding length as a fraction of the warm shoulder spread.
+const LEAK_CORE_RATIO: f64 = 0.55;
+/// Core exposure range over which the warm tint burns toward white.
+const LEAK_BURN_START: f64 = 1.0;
+const LEAK_BURN_END: f64 = 2.2;
+
 fn default_light_leak_gain() -> f64 {
-    1.15
+    2.4
 }
 fn default_light_leak_tint() -> [f64; 3] {
-    [1.0, 0.40, 0.08]
+    [1.0, 0.24, 0.04]
 }
 fn default_light_leak_position() -> [f64; 2] {
-    [-0.98, -0.98]
+    [-0.98, 0.0]
 }
 fn default_light_leak_angle() -> f64 {
-    0.0
+    90.0
 }
 fn default_light_leak_width() -> f64 {
-    0.30
+    0.45
 }
 fn default_light_leak_spread() -> f64 {
-    0.38
+    0.20
 }
 fn default_light_leak_texture_amount() -> f64 {
-    0.30
+    0.45
 }
 fn default_light_leak_texture_scale() -> f64 {
     3.0
@@ -1857,7 +1868,7 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
             (0.5, 0.5)
         };
         let width_variation = if texture {
-            leak.texture_amount * 0.30 * (width_noise * 2.0 - 1.0)
+            leak.texture_amount * 0.35 * (width_noise * 2.0 - 1.0)
         } else {
             0.0
         };
@@ -1867,7 +1878,21 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         let edge_y = dy - closest * direction[1];
         let distance = (edge_x * edge_x + edge_y * edge_y).sqrt();
         let q = distance / local_spread;
-        let falloff = (-q * q).exp();
+        let shoulder = (-q * q).exp();
+        let core_width = if texture {
+            local_spread * LEAK_CORE_RATIO * (0.55 + 0.9 * width_noise)
+        } else {
+            local_spread * LEAK_CORE_RATIO
+        };
+        let core_shift = if texture {
+            leak.texture_amount * 0.40 * (width_noise * 2.0 - 1.0) * local_spread
+        } else {
+            0.0
+        };
+        let core_x = edge_x - core_shift * -direction[1];
+        let core_y = edge_y - core_shift * direction[0];
+        let core_distance = (core_x * core_x + core_y * core_y).sqrt();
+        let core = (-(core_distance / core_width).powi(2)).exp();
         let modulation = if texture {
             let streaks = spektrafilm_model::light_leak::streak_noise(
                 (along / (texture_scale * 3.0)) as f32,
@@ -1879,13 +1904,23 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
             1.0
         };
         let band_envelope = if texture {
-            1.0 - leak.texture_amount * 0.85 * (1.0 - intensity_noise)
+            (1.0 + leak.texture_amount * (5.0 * intensity_noise - 2.5)).max(0.05)
         } else {
             1.0
         };
-        let amplitude = leak.gain * falloff * modulation * band_envelope;
-        for (channel, tint) in pixel.iter_mut().zip(&leak.tint) {
-            *channel = from_f64(to_f64(*channel) + amplitude * tint);
+        let envelope = modulation * band_envelope;
+        let amplitude = leak.gain * LEAK_SHOULDER_SCALE * shoulder * envelope;
+        let core_amplitude = leak.gain * core * envelope;
+        let burn_weight = if texture {
+            0.15 + 1.1 * intensity_noise
+        } else {
+            1.0
+        };
+        let burn = smoothstep(LEAK_BURN_START, LEAK_BURN_END, core_amplitude * burn_weight);
+        for channel in 0..3 {
+            let added = amplitude * leak.tint[channel]
+                + core_amplitude * (LEAK_HOT_TINT[channel] - leak.tint[channel]) * burn;
+            pixel[channel] = from_f64(to_f64(pixel[channel]) + added);
         }
     });
     out
@@ -2380,21 +2415,21 @@ mod tests {
     }
 
     #[test]
-    fn rgb_light_leak_generic_defaults_are_a_warm_top_left_edge_glow() {
+    fn rgb_light_leak_generic_defaults_are_a_warm_left_edge_burn() {
         let params = LutLightLeakParams::default();
         assert!(!params.active);
-        assert_eq!(params.gain, 1.15);
-        assert_eq!(params.tint, [1.0, 0.40, 0.08]);
-        assert_eq!(params.position, [-0.98, -0.98]);
-        assert_eq!(params.angle_deg, 0.0);
-        assert_eq!(params.width, 0.30);
-        assert_eq!(params.spread, 0.38);
-        assert_eq!(params.texture_amount, 0.30);
+        assert_eq!(params.gain, 2.4);
+        assert_eq!(params.tint, [1.0, 0.24, 0.04]);
+        assert_eq!(params.position, [-0.98, 0.0]);
+        assert_eq!(params.angle_deg, 90.0);
+        assert_eq!(params.width, 0.45);
+        assert_eq!(params.spread, 0.20);
+        assert_eq!(params.texture_amount, 0.45);
         assert_eq!(params.texture_scale, 3.0);
     }
 
     #[test]
-    fn rgb_light_leak_default_is_a_soft_top_left_edge_glow() {
+    fn rgb_light_leak_default_is_a_vertical_left_edge_burn() {
         let params = LutLightLeakParams {
             active: true,
             ..LutLightLeakParams::default()
@@ -2403,8 +2438,6 @@ mod tests {
         let rendered = apply_rgb_light_leak(&image, &params);
         let mut changed = 0usize;
         let mut changed_right = 0usize;
-        let mut changed_top_left = 0usize;
-        let mut changed_bottom_left = 0usize;
         let mut rows = [false; 67];
         let mut columns = [false; 101];
         for y in 0..67 {
@@ -2416,13 +2449,6 @@ mod tests {
                     if x >= 50 {
                         changed_right += 1;
                     }
-                    if x < 34 {
-                        if y < 23 {
-                            changed_top_left += 1;
-                        } else if y >= 44 {
-                            changed_bottom_left += 1;
-                        }
-                    }
                 }
             }
         }
@@ -2432,26 +2458,116 @@ mod tests {
             "the default leak fogged {changed_right} of {changed} changed pixels in the opposite half"
         );
         assert!(
-            changed * 4 < 101 * 67,
+            changed * 3 < 101 * 67,
             "the default leak covered {changed} of {} pixels",
             101 * 67
         );
         assert!(
-            changed_top_left > 0 && changed_top_left > changed_bottom_left * 2,
-            "the default glow must be top-heavy, not a centered or bottom blob: top-left {changed_top_left}, bottom-left {changed_bottom_left}"
+            rows.iter().filter(|hit| **hit).count() > 50,
+            "the default glow must run down the frame, not sit in one spot"
+        );
+        let changed_columns = columns.iter().filter(|hit| **hit).count();
+        assert!(
+            (3..=30).contains(&changed_columns),
+            "the default glow should be a vertical edge burn, not a thin line or a wash; got {changed_columns} columns"
         );
         assert!(
-            rows[..3].iter().any(|hit| *hit) && columns[..3].iter().any(|hit| *hit),
-            "the default glow must start at the top-left frame edge, not float inside it"
+            columns[..3].iter().any(|hit| *hit),
+            "the default glow must start at the frame edge, not float inside it"
         );
+        let mut max_min = 0.0_f64;
+        for y in 0..67 {
+            for x in 0..101 {
+                let pixel = rendered.get(x, y);
+                max_min = max_min.max(to_f64(pixel[0]).min(to_f64(pixel[1])).min(to_f64(pixel[2])));
+            }
+        }
         assert!(
-            to_f64(rendered.get(0, 0)[0]) > to_f64(rendered.get(50, 33)[0]),
-            "the default glow must be brightest near the corner"
+            max_min > 0.5,
+            "the default must contain a hot core that lifts all channels: max min {max_min}"
+        );
+        let shoulder = rendered.get(20, 33);
+        assert!(
+            to_f64(shoulder[0]) > to_f64(shoulder[1]) && to_f64(shoulder[1]) > to_f64(shoulder[2]),
+            "the shoulder must stay warm, not turn neutral: {shoulder:?}"
         );
     }
 
     #[test]
-    fn rgb_light_leak_zero_texture_fades_smoothly_from_the_corner() {
+    fn rgb_light_leak_texture_breaks_the_hot_core_into_segments() {
+        let image = ImageBuf::from_data(401, 267, vec![from_f64(0.0); 401 * 267 * 3]);
+        let textured = apply_rgb_light_leak(
+            &image,
+            &LutLightLeakParams {
+                active: true,
+                ..LutLightLeakParams::default()
+            },
+        );
+        let smooth = apply_rgb_light_leak(
+            &image,
+            &LutLightLeakParams {
+                active: true,
+                texture_amount: 0.0,
+                ..LutLightLeakParams::default()
+            },
+        );
+        let white_rows = |rendered: &ImageBuf| {
+            (0..267)
+                .filter(|y| {
+                    (0..401).any(|x| {
+                        let pixel = rendered.get(x, *y);
+                        pixel.iter().all(|value| to_f64(*value) > 1.0)
+                    })
+                })
+                .count()
+        };
+        let textured_rows = white_rows(&textured);
+        let smooth_rows = white_rows(&smooth);
+        assert!(
+            textured_rows > 0,
+            "the default must still burn part of the core to white"
+        );
+        assert!(
+            textured_rows < smooth_rows,
+            "texture must break the hot core into uneven segments, not leave a uniform column: textured {textured_rows}, smooth {smooth_rows}"
+        );
+    }
+
+    #[test]
+    fn rgb_light_leak_gain_burns_the_core_from_orange_to_white() {
+        let image = ImageBuf::from_data(101, 67, vec![from_f64(0.0); 101 * 67 * 3]);
+        let low = apply_rgb_light_leak(
+            &image,
+            &LutLightLeakParams {
+                active: true,
+                gain: 0.7,
+                ..LutLightLeakParams::default()
+            },
+        )
+        .get(0, 33);
+        assert!(
+            to_f64(low[0]) > to_f64(low[1])
+                && to_f64(low[1]) > to_f64(low[2])
+                && to_f64(low[0]) < 1.0,
+            "a partial exposure must stay red/orange: {low:?}"
+        );
+        let high = apply_rgb_light_leak(
+            &image,
+            &LutLightLeakParams {
+                active: true,
+                gain: 4.0,
+                ..LutLightLeakParams::default()
+            },
+        )
+        .get(0, 33);
+        assert!(
+            high.iter().all(|value| to_f64(*value) > 1.0),
+            "a full exposure must burn the core to white: {high:?}"
+        );
+    }
+
+    #[test]
+    fn rgb_light_leak_zero_texture_fades_smoothly_from_the_left_edge() {
         let params = LutLightLeakParams {
             active: true,
             texture_amount: 0.0,
@@ -2460,19 +2576,12 @@ mod tests {
         };
         let image = ImageBuf::from_data(101, 67, vec![from_f64(0.0); 101 * 67 * 3]);
         let rendered = apply_rgb_light_leak(&image, &params);
-        let row: Vec<f64> = (0..70).map(|x| to_f64(rendered.get(x, 4)[0])).collect();
-        let column: Vec<f64> = (0..60).map(|y| to_f64(rendered.get(4, y)[0])).collect();
+        let row: Vec<f64> = (0..70).map(|x| to_f64(rendered.get(x, 33)[0])).collect();
         assert!(row[0] > 1.0e-3, "the smooth glow must add light");
         for pair in row.windows(2) {
             assert!(
-                pair[1] <= pair[0] + 1.0e-9,
+                pair[1] <= pair[0] * 1.001 + 1.0e-9,
                 "zero texture must fade away from the edge without bright bands: {pair:?}"
-            );
-        }
-        for pair in column.windows(2) {
-            assert!(
-                pair[1] <= pair[0] + 1.0e-9,
-                "zero texture must fade inward without bright bands: {pair:?}"
             );
         }
         assert!(
