@@ -121,7 +121,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     }
     let local_spread = max(p.spread * (1.0 + width_variation), 1.0e-6);
     let q = distance / local_spread;
-    let falloff = exp(-q * q) * (1.0 - smoothstep1((q - 1.0) / 0.5));
+    let falloff = exp(-q * q);
 
     var modulation = 1.0;
     if texture_on {

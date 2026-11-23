@@ -446,9 +446,9 @@ pub struct LutLightLeakParams {
     #[serde(default = "default_light_leak_width")]
     pub width: f64,
     /// Half-width of the band across its axis in normalized frame units.
-    /// The profile falls softly from the core and is windowed to zero at one
-    /// and a half spreads. Texture also roughens this width along the band
-    /// without applying a broad symmetric taper.
+    /// The profile is a Gaussian falloff with no hard cutoff, negligible by
+    /// two and a half spreads. Texture also roughens this width along the
+    /// band without applying a broad symmetric taper.
     #[serde(default = "default_light_leak_spread")]
     pub spread: f64,
     /// Strength of the seeded structure. It drives fine streaks, edge
@@ -1867,7 +1867,7 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         let edge_y = dy - closest * direction[1];
         let distance = (edge_x * edge_x + edge_y * edge_y).sqrt();
         let q = distance / local_spread;
-        let falloff = (-q * q).exp() * (1.0 - smoothstep(1.0, 1.5, q));
+        let falloff = (-q * q).exp();
         let modulation = if texture {
             let streaks = spektrafilm_model::light_leak::streak_noise(
                 (along / (texture_scale * 3.0)) as f32,
