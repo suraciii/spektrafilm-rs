@@ -144,6 +144,14 @@ pub static ALL_PATHS: &[&str] = &[
     "film_render.light_leak.leak_spectrum",
     "film_render.light_leak.texture_amount",
     "film_render.light_leak.texture_scale_mm",
+    "effects.light_leak.exposure_ev",
+    "effects.light_leak.position",
+    "effects.light_leak.angle_deg",
+    "effects.light_leak.width",
+    "effects.light_leak.spread",
+    "effects.light_leak.tint",
+    "effects.light_leak.texture_amount",
+    "effects.light_leak.texture_scale",
     "io.input_gamut_compress.hull_detail",
     "io.upscale_factor",
     "io.input_gamut_compress.knee",
@@ -363,6 +371,17 @@ pub fn editor_range(path: &str) -> Option<EditorRange> {
         "film_render.light_leak.leak_spectrum" => Some((0.0, 4.0, 0.05, 2)),
         "film_render.light_leak.texture_amount" => Some((0.0, 1.0, 0.05, 2)),
         "film_render.light_leak.texture_scale_mm" => Some((0.0, 200.0, 0.5, 2)),
+
+        // RGB light leak. `width` is the aperture length along the perimeter;
+        // `spread` is the inward e-folding length.
+        "effects.light_leak.exposure_ev" => Some((0.0, 8.0, 0.25, 2)),
+        "effects.light_leak.position" => Some((0.0, 1.0, 0.01, 3)),
+        "effects.light_leak.angle_deg" => Some((0.0, 360.0, 1.0, 1)),
+        "effects.light_leak.width" => Some((0.02, 4.0, 0.02, 2)),
+        "effects.light_leak.spread" => Some((0.02, 4.0, 0.01, 2)),
+        "effects.light_leak.tint" => Some((0.0, 1.0, 0.01, 2)),
+        "effects.light_leak.texture_amount" => Some((0.0, 1.0, 0.01, 2)),
+        "effects.light_leak.texture_scale" => Some((0.001, 1.0, 0.005, 3)),
 
         // IO
         "io.input_gamut_compress.hull_detail" => Some((0.5, 48.0, 0.5, 1)),

@@ -548,7 +548,7 @@ fn key(label: &str) -> Option<&'static str> {
         "Enable halation" => Some("controls.halation.enable"),
         "Enable halation and in-emulsion scatter." => Some("controls.halation.enable_help"),
         "Enable RGB light leak" => Some("controls.rgb_light_leak.enable"),
-        "rgb light leak gain" => Some("controls.rgb_light_leak.gain"),
+        "rgb light leak exposure ev" => Some("controls.rgb_light_leak.exposure"),
         "rgb light leak tint" => Some("controls.rgb_light_leak.tint"),
         "rgb light leak position" => Some("controls.rgb_light_leak.position"),
         "rgb light leak angle" => Some("controls.rgb_light_leak.angle"),

@@ -1695,7 +1695,10 @@ const LABELS: &[(&str, &str)] = &[
     ("film_render.grain.procedural_size", "Size (relative)"),
     ("film_render.grain.procedural_timer", "Phase timer"),
     ("effects.light_leak.active", "Enable RGB light leak"),
-    ("effects.light_leak.gain", "rgb light leak gain"),
+    (
+        "effects.light_leak.exposure_ev",
+        "rgb light leak exposure ev",
+    ),
     ("effects.light_leak.tint", "rgb light leak tint"),
     ("effects.light_leak.position", "rgb light leak position"),
     ("effects.light_leak.angle_deg", "rgb light leak angle"),
