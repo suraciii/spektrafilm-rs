@@ -1704,7 +1704,7 @@
   "surfaces.lut.diffusion": "Diffusion",
   "surfaces.lut.rgb_halation": "RGB Halation",
   "surfaces.lut.rgb_light_leak": "RGB Light Leak",
-  "surfaces.lut.rgb_light_leak_hint": "The aperture follows the Film light-leak contract: position walks around the frame perimeter, width runs along the edge, spread falls inward, and angle tilts relative to the edge. Default is a long left-edge band whose orange core follows the edge. The factory exposure stays orange; a high exposure burns only the brightest segment toward white. Texture adds fine streaks only.",
+  "surfaces.lut.rgb_light_leak_hint": "The aperture follows the Film light-leak contract: position walks around the frame perimeter, width runs along the edge, spread falls inward, and angle tilts relative to the edge. Default is a soft rectangular left-edge band with straight, feathered core sides. The factory exposure stays orange; a high exposure burns the rectangular core toward white. Texture adds fine streaks only in the outer halo and never deforms the core edge.",
   "surfaces.lut.light_leak_exposure": "Leak exposure ev",
   "surfaces.lut.light_leak_exposure_help": "Aperture exposure in stops. Zero is an exact bypass. Partial exposure stays red-orange; high exposure burns the core toward white.",
   "surfaces.lut.light_leak_width": "Leak width",

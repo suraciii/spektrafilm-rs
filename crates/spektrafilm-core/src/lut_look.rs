@@ -467,20 +467,21 @@ pub struct LutLightLeakParams {
 /// Tint the leak reaches when its local additive exposure is high enough to
 /// burn the core white. The warm tint remains the shoulder color.
 const LEAK_HOT_TINT: [f64; 3] = [1.0, 0.92, 0.80];
-/// Warm shoulder scale. The narrow core carries more of the exposure so the
-/// edge can burn white without washing the whole band pale.
+/// Warm shoulder scale. The rectangular core carries the exposure; the
+/// shoulder adds a soft halo outside it without changing the core silhouette.
 const LEAK_SHOULDER_SCALE: f64 = 0.48;
-/// Hot-core e-folding length as a fraction of the warm shoulder spread.
-const LEAK_CORE_RATIO: f64 = 0.55;
 /// Core exposure range over which the warm tint burns toward white.
 const LEAK_BURN_START: f64 = 1.2;
 const LEAK_BURN_END: f64 = 2.4;
-// The orange core follows a long envelope along the aperture, so the default
-// reads as a band rather than a round point. The white burn keeps a shorter
-// envelope so a high exposure does not become a uniform white bar.
-const LEAK_CORE_LENGTH: f64 = 0.85;
-const LEAK_BURN_CENTER: f64 = 0.05;
-const LEAK_BURN_WIDTH: f64 = 0.45;
+// The overexposed core is a rectangle anchored to the frame edge: straight
+// sides across `spread`, straight ends across `width`. The across profile is
+// a smooth ramp so the core has no hard panel seam; the along profile keeps a
+// flat run and only feathers the ends.
+const LEAK_END_FEATHER: f64 = 0.08;
+/// Halo widths as multiples of the core dimensions. The halo is a separate
+/// soft falloff outside the rectangle; texture only touches this layer.
+const LEAK_HALO_ACROSS: f64 = 1.6;
+const LEAK_HALO_ALONG: f64 = 1.15;
 // The core stays orange below the burn range; this boost gives it a readable
 // highlight instead of a flat shoulder-only band.
 const LEAK_CORE_BOOST: f64 = 0.35;
@@ -1873,15 +1874,22 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
         let dy = frame_y - center[1];
         let along = dx * direction[0] + dy * direction[1];
         let across = -dx * direction[1] + dy * direction[0];
-        let closest = along.clamp(-half, half);
-        let edge_x = dx - closest * direction[0];
-        let edge_y = dy - closest * direction[1];
-        let distance = (edge_x * edge_x + edge_y * edge_y).sqrt();
-        let q = distance / spread;
-        let shoulder = (-q * q).exp();
-        let aperture_t = if half > 0.0 { along / half } else { 0.0 };
-        let core_along = (-(aperture_t / LEAK_CORE_LENGTH).powi(2)).exp();
-        let core = (-(distance / (spread * LEAK_CORE_RATIO)).powi(2)).exp() * core_along;
+        let normal = [-direction[1], direction[0]];
+        let inward_sign = if normal[0] * -center[0] + normal[1] * -center[1] >= 0.0 {
+            1.0
+        } else {
+            -1.0
+        };
+        let inward = (across * inward_sign).max(0.0);
+        let u = inward / spread;
+        let half_safe = half.max(f64::EPSILON);
+        let across_core = 1.0 - smoothstep(0.0, 1.0, u);
+        let along_core =
+            1.0 - smoothstep(half_safe * (1.0 - LEAK_END_FEATHER), half_safe, along.abs());
+        let core = across_core.min(along_core);
+        let halo_across = 1.0 - smoothstep(0.0, LEAK_HALO_ACROSS, u);
+        let halo_along = 1.0 - smoothstep(half_safe, half_safe * LEAK_HALO_ALONG, along.abs());
+        let shoulder = halo_across * halo_along;
         let modulation = if texture {
             let streaks = spektrafilm_model::light_leak::streak_noise(
                 (along / (texture_scale * 3.0)) as f32,
@@ -1893,10 +1901,8 @@ fn apply_rgb_light_leak(image: &ImageBuf, leak: &LutLightLeakParams) -> ImageBuf
             1.0
         };
         let amplitude = exposure_gain * LEAK_SHOULDER_SCALE * shoulder * modulation;
-        let core_amplitude = exposure_gain * core * modulation;
-        let burn_hotspot =
-            (-((aperture_t.clamp(-1.0, 1.0) - LEAK_BURN_CENTER) / LEAK_BURN_WIDTH).powi(2)).exp();
-        let burn = smoothstep(LEAK_BURN_START, LEAK_BURN_END, core_amplitude) * burn_hotspot;
+        let core_amplitude = exposure_gain * core;
+        let burn = smoothstep(LEAK_BURN_START, LEAK_BURN_END, core_amplitude);
         for channel in 0..3 {
             let core_orange = core_amplitude * LEAK_CORE_BOOST * (1.0 - burn) * leak.tint[channel];
             let core_white = core_amplitude * (LEAK_HOT_TINT[channel] - leak.tint[channel]) * burn;
@@ -2419,7 +2425,7 @@ mod tests {
                     active: true,
                     exposure_ev: 0.5,
                     position,
-                    width: 1.0,
+                    width: 1.6,
                     spread: 0.12,
                     texture_amount: 0.0,
                     texture_scale: 0.0,
@@ -2495,7 +2501,7 @@ mod tests {
             "the default glow must be a long edge band, not a round point: rows {changed_rows}, columns {changed_columns}"
         );
         assert!(
-            rows[..3].iter().any(|hit| *hit) && columns[..3].iter().any(|hit| *hit),
+            columns[..3].iter().any(|hit| *hit),
             "the default glow must start at the left frame edge, not float inside it"
         );
         let mut max_min = 0.0_f64;
@@ -2509,10 +2515,39 @@ mod tests {
             max_min < 0.5,
             "the default must stay orange, not burn a neutral white core: max min {max_min}"
         );
-        let shoulder = rendered.get(20, 33);
+        let shoulder = rendered.get(12, 33);
         assert!(
             to_f64(shoulder[0]) > to_f64(shoulder[1]) && to_f64(shoulder[1]) > to_f64(shoulder[2]),
             "the shoulder must stay warm, not turn neutral: {shoulder:?}"
+        );
+    }
+
+    #[test]
+    fn rgb_light_leak_overexposed_core_keeps_a_straight_rectangular_edge() {
+        let image = ImageBuf::from_data(201, 201, vec![from_f64(0.0); 201 * 201 * 3]);
+        let rendered = apply_rgb_light_leak(
+            &image,
+            &LutLightLeakParams {
+                active: true,
+                exposure_ev: 2.0,
+                position: 0.90,
+                width: 1.0,
+                spread: 0.20,
+                ..LutLightLeakParams::default()
+            },
+        );
+        let edges = (70..=130)
+            .filter_map(|y| (0..80).rev().find(|x| to_f64(rendered.get(*x, y)[1]) > 0.8))
+            .collect::<Vec<_>>();
+        assert!(
+            edges.len() > 40,
+            "the overexposed core must cover the central run: {edges:?}"
+        );
+        let min = *edges.iter().min().unwrap();
+        let max = *edges.iter().max().unwrap();
+        assert!(
+            max - min <= 2,
+            "the overexposed core edge must stay straight, not wobble with texture: columns {min}..{max}"
         );
     }
 
@@ -2666,7 +2701,7 @@ mod tests {
             tint: [1.0, 0.5, 0.25],
             position: 0.90,
             angle_deg: 0.0,
-            width: 0.2,
+            width: 0.5,
             spread: 0.25,
             texture_amount: 0.0,
             texture_scale: 0.0,

@@ -676,13 +676,13 @@ fn description(path: &str) -> Option<&'static str> {
             "Full aperture length along the frame perimeter in normalized frame units. At or above the edge length the aperture runs past both corners.",
         ),
         "effects.light_leak.spread" => Some(
-            "Inward e-folding length of the RGB leak in normalized frame units; the profile is a Gaussian falloff with no hard cutoff.",
+            "Inward extent of the RGB leak's rectangular core in normalized frame units; a soft halo may extend beyond it.",
         ),
         "effects.light_leak.angle_deg" => Some(
             "Aperture tilt relative to the perimeter tangent, in degrees; zero follows the frame edge.",
         ),
         path if path.starts_with("effects.light_leak.") => Some(
-            "Peripheral tinted light leak for LUT and Off modes; one perimeter aperture uses the same position, width, spread, angle, and exposure semantics as the Film leak. The orange core runs along the edge as a long band. The warm shoulder stays orange at low exposure; high exposure burns only the brightest segment toward white. Texture adds fine streaks without low-frequency lobes. Added as linear light before RGB halation and the lookup.",
+            "Peripheral tinted light leak for LUT and Off modes; one perimeter aperture uses the same position, width, spread, angle, and exposure semantics as the Film leak. The orange core runs along the edge as a rectangular band with straight, feathered sides. The warm shoulder stays orange at low exposure; high exposure burns the rectangular core toward white. Texture adds fine streaks in the halo without deforming the core or creating low-frequency lobes. Added as linear light before RGB halation and the lookup.",
         ),
         path if path.starts_with("effects.halation.") => Some(
             "Halation for LUT and Off modes in linear light before the lookup; it does not read film density or a film profile.",

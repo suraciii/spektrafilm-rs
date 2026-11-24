@@ -30,12 +30,11 @@ struct Params {
 
 const PI: f32 = 3.141592653589793;
 const LEAK_SHOULDER_SCALE: f32 = 0.48;
-const LEAK_CORE_RATIO: f32 = 0.55;
 const LEAK_BURN_START: f32 = 1.2;
 const LEAK_BURN_END: f32 = 2.4;
-const LEAK_CORE_LENGTH: f32 = 0.85;
-const LEAK_BURN_CENTER: f32 = 0.05;
-const LEAK_BURN_WIDTH: f32 = 0.45;
+const LEAK_END_FEATHER: f32 = 0.08;
+const LEAK_HALO_ACROSS: f32 = 1.6;
+const LEAK_HALO_ALONG: f32 = 1.15;
 const LEAK_CORE_BOOST: f32 = 0.35;
 fn hash2(x: u32, y: u32, seed: u32) -> f32 {
     var h = seed ^ 0x9E3779B9u;
@@ -131,19 +130,25 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     let offset = vec2<f32>(frame_x, frame_y) - center;
     let along = dot(offset, direction);
     let across = dot(offset, vec2<f32>(-direction.y, direction.x));
-    let closest = clamp(along, -0.5 * p.width, 0.5 * p.width);
-    let edge = offset - direction * closest;
-    let distance = length(edge);
+    let normal = vec2<f32>(-direction.y, direction.x);
+    let inward_sign = select(-1.0, 1.0, dot(normal, -center) >= 0.0);
+    let inward = max(across * inward_sign, 0.0);
 
     let texture_on = p.texture_amount > 0.0 && p.texture_scale > 0.0;
     let local_spread = max(p.spread, 1.0e-6);
-    let q = distance / local_spread;
-    let shoulder = exp(-q * q);
-    let core_width = local_spread * LEAK_CORE_RATIO;
-    let half = 0.5 * p.width;
-    let aperture_t = select(0.0, along / half, half > 0.0);
-    let core_along = exp(-pow(aperture_t / LEAK_CORE_LENGTH, 2.0));
-    let core = exp(-(distance / core_width) * (distance / core_width)) * core_along;
+    let u = inward / local_spread;
+    let half = max(0.5 * p.width, 1.0e-6);
+    let across_core = 1.0 - smoothstep1(u);
+    let along_core = 1.0 - smoothstep1(
+        (abs(along) - half * (1.0 - LEAK_END_FEATHER))
+            / (half * LEAK_END_FEATHER),
+    );
+    let core = min(across_core, along_core);
+    let halo_across = 1.0 - smoothstep1(u / LEAK_HALO_ACROSS);
+    let halo_along = 1.0 - smoothstep1(
+        (abs(along) - half) / (half * (LEAK_HALO_ALONG - 1.0)),
+    );
+    let shoulder = halo_across * halo_along;
 
     var modulation = 1.0;
     if texture_on {
@@ -157,13 +162,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) 
     }
 
     let amplitude = p.gain * LEAK_SHOULDER_SCALE * shoulder * modulation;
-    let core_amplitude = p.gain * core * modulation;
-    let burn_hotspot = exp(
-        -pow((clamp(aperture_t, -1.0, 1.0) - LEAK_BURN_CENTER) / LEAK_BURN_WIDTH, 2.0),
-    );
+    let core_amplitude = p.gain * core;
     let burn = smoothstep1(
         (core_amplitude - LEAK_BURN_START) / (LEAK_BURN_END - LEAK_BURN_START),
-    ) * burn_hotspot;
+    );
     let tint = vec3<f32>(p.tint_r, p.tint_g, p.tint_b);
     let hot = vec3<f32>(1.0, 0.92, 0.80);
     let core_orange = core_amplitude * LEAK_CORE_BOOST * (1.0 - burn);

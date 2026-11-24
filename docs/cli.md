@@ -156,14 +156,14 @@ spektrafilm describe --module film_render.light_leak
 
 ### RGB light leak
 
-`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. It uses the Film leak geometry: `position` walks the frame perimeter from `0` to `1` clockwise from the top-left corner, `width` is the full aperture length along the edge, `spread` is the inward e-folding length, and `angle_deg` tilts the aperture relative to the perimeter tangent. `exposure_ev` is leak exposure in stops; zero is an exact bypass. The default is a long warm left-edge band that stays orange; a high exposure burns the core toward white. Texture adds fine streaks without low-frequency lobes. `seed` selects deterministic texture. Zero exposure or a zero tint is an exact bypass.
+`effects.light_leak` is the LUT/Off appearance model. It adds a frame-relative tinted spill in linear light after Diffusion and before RGB Halation and the lookup. It does not read film density and does not change Film light leak. It uses the Film leak geometry: `position` walks the frame perimeter from `0` to `1` clockwise from the top-left corner, `width` is the full aperture length along the edge, `spread` is the inward extent of the rectangular core, and `angle_deg` tilts the aperture relative to the perimeter tangent. `exposure_ev` is leak exposure in stops; zero is an exact bypass. The default is a soft rectangular warm left-edge band that stays orange; a high exposure burns the core toward white. Texture adds fine streaks in the halo without deforming the rectangular core or creating low-frequency lobes. `seed` selects deterministic texture. Zero exposure or a zero tint is an exact bypass.
 
 ```bash
 spektrafilm describe --module effects.light_leak
 ```
 
 ```bash
-# The default long left-edge band, written explicitly
+# The default rectangular left-edge band, written explicitly
 ./target/release/spektrafilm process input.png -o leak.tif \
     --lut look.cube \
     --set effects.light_leak.active=true \
